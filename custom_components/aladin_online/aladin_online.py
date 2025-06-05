@@ -116,7 +116,7 @@ class AladinWeather:
 class AladinOnlineCoordinator(DataUpdateCoordinator):
 
 	def __init__(self, hass: core.HomeAssistant, config: MappingProxyType) -> None:
-		super().__init__(hass, LOGGER, name=DOMAIN, update_interval=timedelta(minutes=1), update_method=self.update)
+		super().__init__(hass, LOGGER, name=DOMAIN, update_interval=timedelta(minutes=60), update_method=self.update)
 
 		self._config: MappingProxyType = config
 
@@ -187,11 +187,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 		if self._data is None:
 			return True
 
-		# Updates are in 0, 5, 12 and 17 hour so wait an hour to be sure the update is there
-		if datetime.now().hour in [1, 6, 13, 18]:
-			return True
-
-		return False
+		return True
 
 	async def _update_data(self) -> None:
 		session = aiohttp_client.async_get_clientsession(self.hass)
