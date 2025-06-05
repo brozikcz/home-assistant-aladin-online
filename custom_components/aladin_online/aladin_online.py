@@ -134,7 +134,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 			raise ServiceUnavailable
 
 		data_time = await AladinOnlineCoordinator._format_datetime(self._data[DATA_TIME])
-		now = datetime.now()
+		now = datetime.now() + timedelta(hours=1)
 
 		actual_index = int(math.floor((now.timestamp() - data_time.timestamp()) / 3600))
 		condition_actual_index = int(math.floor(actual_index / 2))
@@ -202,7 +202,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 	@staticmethod
 	async def _format_datetime(raw: str) -> datetime:
 		# The time is in UTC
-		return dt.parse_datetime(raw)
+		return dt.parse_datetime(raw) - timedelta(hours=2)
 
 	@staticmethod
 	def _format_condition(raw: str) -> str:
