@@ -116,7 +116,7 @@ class AladinWeather:
 class AladinOnlineCoordinator(DataUpdateCoordinator):
 
 	def __init__(self, hass: core.HomeAssistant, config: MappingProxyType) -> None:
-		super().__init__(hass, LOGGER, name=DOMAIN, update_interval=timedelta(minutes=60), update_method=self.update)
+		super().__init__(hass, LOGGER, name=DOMAIN, update_interval=timedelta(minutes=55), update_method=self.update)
 
 		self._config: MappingProxyType = config
 
@@ -202,7 +202,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 	@staticmethod
 	async def _format_datetime(raw: str) -> datetime:
 		# The time is in UTC
-		return dt.parse_datetime(raw) - timedelta(hours=2)
+		return dt.parse_datetime(raw)
 
 	@staticmethod
 	def _format_condition(raw: str) -> str:
