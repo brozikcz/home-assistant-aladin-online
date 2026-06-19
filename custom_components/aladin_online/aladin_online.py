@@ -221,4 +221,4 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 
 	@staticmethod
 	def _format_wind_direction(raw: float) -> float:
-		return (raw + 180) % 360
+		return raw % 360
