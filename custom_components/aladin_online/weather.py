@@ -1,4 +1,3 @@
-import datetime
 from homeassistant.const import (
 	CONF_NAME,
 	UnitOfLength,
@@ -26,6 +25,7 @@ from homeassistant.core import callback, HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 from homeassistant.helpers.device_registry import DeviceEntryType
+from homeassistant.util import dt
 from types import MappingProxyType
 from . import AladinOnlineConfigEntry
 from .aladin_online import AladinActualWeather
@@ -89,7 +89,7 @@ class WeatherEntity(CoordinatorEntity, ComponentWeatherEntity):
 		self._attr_native_apparent_temperature = round(actual_weather.apparent_temperature, 1)
 		self._attr_cloud_coverage = int(round(actual_weather.clouds))
 
-		now = datetime.datetime.now()
+		now = dt.now()
 
 		self._forecast: list[Forecast] = []
 

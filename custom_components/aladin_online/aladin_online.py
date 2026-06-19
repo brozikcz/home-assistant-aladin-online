@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from homeassistant import core
 from homeassistant.components.weather import (
 	ATTR_CONDITION_CLEAR_NIGHT,
@@ -87,7 +87,7 @@ class AladinWeatherForecast:
 
 	def __init__(
 		self,
-		forecast_datetime: datetime,
+		forecast_datetime: dt.datetime,
 		condition: str,
 		temperature: float,
 		apparent_temperature: float,
@@ -145,7 +145,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 		if not entries:
 			raise NoData
 
-		now = datetime.now(tz=dt.UTC)
+		now = dt.utcnow()
 
 		# Najdi aktuální hodinu v datech
 		actual_entry = None
@@ -203,7 +203,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 		if self._data is None:
 			return True
 		# ČHMÚ aktualizuje 4x denně: 00, 06, 12, 18 UTC
-		if datetime.now().hour in [1, 7, 13, 19]:
+		if dt.now().hour in [1, 7, 13, 19]:
 			return True
 		return False
 
