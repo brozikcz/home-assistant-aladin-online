@@ -112,6 +112,7 @@ class WeatherEntity(CoordinatorEntity, ComponentWeatherEntity):
 			})
 
 	async def async_forecast_hourly(self) -> list[Forecast] | None:
+		self._update_attributes()
 		return self._forecast
 
 	@callback

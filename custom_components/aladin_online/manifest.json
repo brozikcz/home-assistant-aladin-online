@@ -1,6 +1,6 @@
  {
-	"domain": "aladin_online",
-	"name": "Aladin online (Czech Republic)",
+	"domain": "aladin_online_chmi",
+	"name": "Aladin online (Czech Republic) CHMI",
 	"version": "2.8.2",
 	"integration_type": "service",
 	"config_flow": true,

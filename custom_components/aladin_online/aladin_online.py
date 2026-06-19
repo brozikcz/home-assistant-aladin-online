@@ -200,12 +200,7 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 		return weather
 
 	def _should_update_data(self) -> bool:
-		if self._data is None:
-			return True
-		# ČHMÚ aktualizuje 4x denně: 00, 06, 12, 18 UTC
-		if dt.now().hour in [1, 7, 13, 19]:
-			return True
-		return False
+		return True
 
 	async def _update_data(self) -> None:
 		session = aiohttp_client.async_get_clientsession(self.hass)
