@@ -8,7 +8,7 @@ from homeassistant.components.weather import (
 	ATTR_CONDITION_SNOWY,
 	ATTR_CONDITION_SUNNY,
 	ATTR_CONDITION_RAINY,
-	ATTR_CONDITION_WINDY,
+	ATTR_CONDITION_WINDY, ATTR_CONDITION_LIGHTNING_RAINY, ATTR_CONDITION_FOG, ATTR_CONDITION_LIGHTNING,
 )
 from homeassistant.const import (
 	CONF_LATITUDE,
@@ -40,14 +40,17 @@ ICON_CONDITION_MAP = {
 	10:  ATTR_CONDITION_SUNNY,          # jasno den
 	20:  ATTR_CONDITION_SUNNY,          # skoro jasno den
 	40:  ATTR_CONDITION_PARTLYCLOUDY,   # polojasno
-	60:  ATTR_CONDITION_CLOUDY,         # skoro zataženo
+	60:  ATTR_CONDITION_PARTLYCLOUDY,   # skoro zataženo
 	70:  ATTR_CONDITION_RAINY,          # zataženo + déšť
+	79:  ATTR_CONDITION_LIGHTNING_RAINY,# blesky
 	80:  ATTR_CONDITION_CLOUDY,         # zataženo
 	81:  ATTR_CONDITION_POURING,        # zataženo + silný déšť
+	86:  ATTR_CONDITION_LIGHTNING_RAINY,# silný déšť + blesky
+	90:  ATTR_CONDITION_FOG,            # zataženo + silný déšť
 	110: ATTR_CONDITION_CLEAR_NIGHT,    # jasno noc
-	120: ATTR_CONDITION_CLEAR_NIGHT,    # skoro jasno noc
-	140: ATTR_CONDITION_PARTLYCLOUDY,   # polojasno noc
-	160: ATTR_CONDITION_PARTLYCLOUDY,   # skoro zataženo noc
+	120: ATTR_CONDITION_PARTLYCLOUDY,   # skoro jasno noc
+	140: ATTR_CONDITION_CLOUDY,   		# polojasno noc
+	160: ATTR_CONDITION_CLOUDY,   		# skoro zataženo noc
 	170: ATTR_CONDITION_CLOUDY,         # zataženo noc
 }
 
