@@ -1,4 +1,8 @@
 from datetime import timedelta
+from http import HTTPStatus
+from types import MappingProxyType
+from typing import Final, List
+
 from homeassistant import core
 from homeassistant.components.weather import (
 	ATTR_CONDITION_CLEAR_NIGHT,
@@ -8,17 +12,10 @@ from homeassistant.components.weather import (
 	ATTR_CONDITION_SNOWY,
 	ATTR_CONDITION_SUNNY,
 	ATTR_CONDITION_RAINY,
-	ATTR_CONDITION_WINDY, ATTR_CONDITION_LIGHTNING_RAINY, ATTR_CONDITION_FOG, ATTR_CONDITION_LIGHTNING,
-)
-from homeassistant.const import (
-	CONF_LATITUDE,
-	CONF_LONGITUDE,
-)
+	ATTR_CONDITION_LIGHTNING_RAINY, ATTR_CONDITION_FOG, ATTR_CONDITION_SNOWY_RAINY, )
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt
-from http import HTTPStatus
-import math
 from .const import (
 	DOMAIN,
 	LOGGER,
@@ -26,8 +23,6 @@ from .const import (
 	URL,
 )
 from .errors import NoData, ServiceUnavailable
-from types import MappingProxyType
-from typing import Final, List
 
 # Nová URL - data-provider.chmi.cz, parametr je ID stanice
 URL: Final = "https://data-provider.chmi.cz/api/graphs/graf.meteogram/{}"
@@ -41,7 +36,7 @@ ICON_CONDITION_MAP = {
 	20:  ATTR_CONDITION_SUNNY,          # skoro jasno den
 	40:  ATTR_CONDITION_PARTLYCLOUDY,   # polojasno
 	60:  ATTR_CONDITION_PARTLYCLOUDY,   # skoro zataženo
-	70:  ATTR_CONDITION_RAINY,          # zataženo + déšť
+	70:  ATTR_CONDITION_CLOUDY,         # zataženo
 	79:  ATTR_CONDITION_LIGHTNING_RAINY,# blesky
 	80:  ATTR_CONDITION_CLOUDY,         # zataženo
 	81:  ATTR_CONDITION_POURING,        # zataženo + silný déšť
@@ -219,7 +214,23 @@ class AladinOnlineCoordinator(DataUpdateCoordinator):
 	def _format_condition(icon: int) -> str:
 		if icon in ICON_CONDITION_MAP:
 			return ICON_CONDITION_MAP[icon]
+
+		match icon % 10:
+			case 0:
+				return ATTR_CONDITION_CLOUDY
+			case 1 | 2:
+				return ATTR_CONDITION_RAINY
+			case 3:
+				return ATTR_CONDITION_SNOWY_RAINY
+			case 4 | 5:
+				return ATTR_CONDITION_SNOWY
+			case 6 | 7 | 8 | 9:
+				return ATTR_CONDITION_LIGHTNING_RAINY
+
 		LOGGER.warning("Neznámá ikona počasí: {}".format(icon))
+
+		if icon > 100:
+			return ATTR_CONDITION_CLEAR_NIGHT
 		return ATTR_CONDITION_SUNNY
 
 	@staticmethod
