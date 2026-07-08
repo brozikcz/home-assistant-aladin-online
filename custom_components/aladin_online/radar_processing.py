@@ -169,7 +169,7 @@ def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mm
 
 
 def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, window_radius: int = 3,
-                                   threshold_mmh: float = 0.0) -> int:
+                                   threshold_mmh: float = 0.5) -> int:
     """Calculate spatial rain probability (%) within a bounded window around the target coordinates."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
