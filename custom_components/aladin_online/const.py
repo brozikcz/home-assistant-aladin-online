@@ -2,8 +2,8 @@ import logging
 from typing import Final
 
 LOGGER: Final = logging.getLogger(__package__)
-DOMAIN: Final = "aladin_online"
-NAME: Final = "Aladin online (Czech Republic)"
+DOMAIN: Final = "aladin_online_chmi"
+NAME: Final = "Aladin online (Czech Republic) CHMI"
 URL: Final = "https://data-provider.chmi.cz/api/graphs/graf.meteogram/?x={}&y={}"
 
 CONF_RADAR_RADIUS: Final = "radar_radius"
