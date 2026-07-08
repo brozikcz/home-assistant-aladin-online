@@ -3,17 +3,19 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from typing import Final
 from .aladin_online import AladinOnlineCoordinator
+from .radar_coordinator import AladinRadarCoordinator
 
-type AladinOnlineConfigEntry = ConfigEntry[AladinOnlineCoordinator]
+type AladinOnlineConfigEntry = ConfigEntry[AladinRadarCoordinator]
 
 PLATFORMS: Final = [
+	Platform.BINARY_SENSOR,
 	Platform.SENSOR,
 	Platform.WEATHER,
 ]
 
 
 async def async_setup_entry(hass: core.HomeAssistant, config_entry: AladinOnlineConfigEntry) -> bool:
-	coordinator = AladinOnlineCoordinator(hass, config_entry.data)
+	coordinator = AladinRadarCoordinator(hass, config_entry.data)
 
 	await coordinator.async_config_entry_first_refresh()
 

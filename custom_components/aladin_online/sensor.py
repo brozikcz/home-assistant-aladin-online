@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from homeassistant.const import (
 	PERCENTAGE,
+	UnitOfLength,
 	UnitOfPressure,
 	UnitOfSpeed,
 	UnitOfTemperature,
@@ -26,6 +27,7 @@ from types import MappingProxyType
 from typing import Dict
 from . import AladinOnlineConfigEntry
 from .aladin_online import AladinActualWeather
+from .radar_coordinator import AladinRadarCoordinator
 from .const import (
 	DOMAIN,
 	NAME,
@@ -42,12 +44,53 @@ class SensorType(StrEnum):
 	TEMPERATURE = "temperature"
 	WIND_SPEED = "wind_speed"
 	WIND_GUST_SPEED = "wind_gust_speed"
-
+	RADAR_NEAREST_RAIN_DISTANCE = "radar_nearest_rain_distance"
+	RADAR_MINUTES_UNTIL_RAIN = "radar_minutes_until_rain"
+	RADAR_RAIN_INTENSITY = "radar_rain_intensity"
+	RADAR_RAIN_PROBABILITY = "radar_rain_probability"
 
 @dataclass(frozen=True, kw_only=True)
 class SensorEntityDescription(ComponentSensorEntityDescription):
 	value_func: Callable | None = None
 
+RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
+	SensorType.RADAR_NEAREST_RAIN_DISTANCE: SensorEntityDescription(
+		key=SensorType.RADAR_NEAREST_RAIN_DISTANCE,
+		name="Radar nearest rain distance",
+		icon="mdi:radar",
+		native_unit_of_measurement=UnitOfLength.KILOMETERS,
+		suggested_display_precision=1,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.nearest_distance,
+	),
+	SensorType.RADAR_MINUTES_UNTIL_RAIN: SensorEntityDescription(
+		key=SensorType.RADAR_MINUTES_UNTIL_RAIN,
+		name="Radar minutes until rain",
+		icon="mdi:clock-outline",
+		native_unit_of_measurement="min",
+		suggested_display_precision=0,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.minutes_until_rain,
+	),
+	SensorType.RADAR_RAIN_INTENSITY: SensorEntityDescription(
+		key=SensorType.RADAR_RAIN_INTENSITY,
+		name="Radar rain intensity",
+		device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+		native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+		suggested_display_precision=2,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.rain_now_value,
+	),
+	SensorType.RADAR_RAIN_PROBABILITY: SensorEntityDescription(
+		key=SensorType.RADAR_RAIN_PROBABILITY,
+		name="Radar rain probability",
+		icon="mdi:water-percent",
+		native_unit_of_measurement=PERCENTAGE,
+		suggested_display_precision=0,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.rain_probability,
+	),
+}
 
 SENSORS: Dict[SensorType, SensorEntityDescription] = {
 	SensorType.APPARENT_TEMPERATURE: SensorEntityDescription(
@@ -133,6 +176,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: AladinOnlineConfi
 			SensorEntity(coordinator, config_entry.data, SENSORS[sensor_type]),
 		])
 
+	for sensor_type in RADAR_SENSORS:
+		async_add_entities([
+			RadarSensorEntity(coordinator, config_entry.data, RADAR_SENSORS[sensor_type]),
+		])
+
 
 class SensorEntity(CoordinatorEntity, ComponentSensorEntity):
 
@@ -162,12 +210,53 @@ class SensorEntity(CoordinatorEntity, ComponentSensorEntity):
 		self._update_attributes()
 
 	def _update_attributes(self):
-		if self.coordinator.data is None:
+		if self.coordinator.data is None or self.coordinator.data.weather is None:
 			return
 
-		actual_weather: AladinActualWeather = self.coordinator.data.actual_weather
+		actual_weather: AladinActualWeather = self.coordinator.data.weather.actual_weather
 
 		self._attr_native_value = self.entity_description.value_func(actual_weather)
+
+
+class RadarSensorEntity(CoordinatorEntity, ComponentSensorEntity):
+
+	entity_description: SensorEntityDescription
+
+	_attr_has_entity_name = True
+
+	def __init__(self, coordinator: DataUpdateCoordinator, config: MappingProxyType, entity_description: SensorEntityDescription):
+		super().__init__(coordinator)
+
+		self.entity_description = entity_description
+		self._attr_translation_key = entity_description.key
+
+		# Set name explicitly to ensure descriptive entity ID
+		self._attr_name = entity_description.name
+
+		self._attr_unique_id = "{}.{}".format(
+			config[CONF_NAME],
+			self.entity_description.key,
+		)
+
+		self._attr_device_info = DeviceInfo(
+			identifiers={(DOMAIN, f"{config[CONF_NAME]}_radar")},
+			name=config[CONF_NAME],
+			manufacturer="ČHMÚ",
+			model="Nowcasting Engine (INCA-CZ / COTREC)",
+			entry_type=DeviceEntryType.SERVICE,
+			via_device=(DOMAIN, config[CONF_NAME]),
+		)
+
+		self._update_attributes()
+
+	def _update_attributes(self):
+		if self.coordinator.data is None or self.coordinator.data.radar is None:
+			return
+
+		self._attr_native_value = self.entity_description.value_func(self.coordinator.data.radar)
+
+		if self.entity_description.key == SensorType.RADAR_RAIN_PROBABILITY:
+			self._attr_extra_state_attributes = self.coordinator.data.radar.forecast_probabilities
 
 	@callback
 	def _handle_coordinator_update(self) -> None:

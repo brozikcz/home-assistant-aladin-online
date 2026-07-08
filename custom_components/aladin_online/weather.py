@@ -74,10 +74,10 @@ class WeatherEntity(CoordinatorEntity, ComponentWeatherEntity):
 		self._update_attributes()
 
 	def _update_attributes(self):
-		if self.coordinator.data is None:
+		if self.coordinator.data is None or self.coordinator.data.weather is None:
 			return
 
-		actual_weather: AladinActualWeather = self.coordinator.data.actual_weather
+		actual_weather: AladinActualWeather = self.coordinator.data.weather.actual_weather
 
 		self._attr_condition = actual_weather.condition
 		self._attr_humidity = round(actual_weather.humidity, 1)
@@ -93,7 +93,7 @@ class WeatherEntity(CoordinatorEntity, ComponentWeatherEntity):
 
 		self._forecast: list[Forecast] = []
 
-		for hourly_forecast in self.coordinator.data.hourly_forecasts:
+		for hourly_forecast in self.coordinator.data.weather.hourly_forecasts:
 			if hourly_forecast.datetime < now:
 				continue
 

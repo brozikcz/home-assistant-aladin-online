@@ -10,7 +10,7 @@ from homeassistant.helpers import aiohttp_client
 from http import HTTPStatus
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from .const import DOMAIN, NAME, URL, LOGGER
+from .const import DOMAIN, NAME, URL, LOGGER, CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS
 from .errors import LocationUnavailable, ServiceUnavailable
 from typing import Any, Dict
 
@@ -25,6 +25,7 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 					CONF_NAME: user_input[CONF_NAME],
 					CONF_LATITUDE: user_input[CONF_LATITUDE],
 					CONF_LONGITUDE: user_input[CONF_LONGITUDE],
+					CONF_RADAR_RADIUS: user_input[CONF_RADAR_RADIUS],
 				}
 				await self.async_set_unique_id(user_input[CONF_NAME])
 				self._abort_if_unique_id_configured()
@@ -48,6 +49,7 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 				vol.Required(CONF_NAME, default=self.hass.config.location_name): str,
 				vol.Required(CONF_LATITUDE, default=self.hass.config.latitude): cv.latitude,
 				vol.Required(CONF_LONGITUDE, default=self.hass.config.longitude): cv.longitude,
+				vol.Required(CONF_RADAR_RADIUS, default=DEFAULT_RADAR_RADIUS): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
 			}),
 			errors=errors,
 		)
@@ -61,6 +63,7 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 					CONF_NAME: reconfigure_entry.data[CONF_NAME],
 					CONF_LATITUDE: user_input[CONF_LATITUDE],
 					CONF_LONGITUDE: user_input[CONF_LONGITUDE],
+					CONF_RADAR_RADIUS: user_input[CONF_RADAR_RADIUS],
 				}
 
 				await self._async_validate_location(user_input[CONF_LATITUDE], user_input[CONF_LONGITUDE])
@@ -81,6 +84,7 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 			data_schema=vol.Schema({
 				vol.Required(CONF_LATITUDE, default=reconfigure_entry.data.get(CONF_LATITUDE, self.hass.config.latitude)): cv.latitude,
 				vol.Required(CONF_LONGITUDE, default=reconfigure_entry.data.get(CONF_LONGITUDE, self.hass.config.longitude)): cv.longitude,
+				vol.Required(CONF_RADAR_RADIUS, default=reconfigure_entry.data.get(CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS)): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
 			}),
 			errors=errors,
 		)

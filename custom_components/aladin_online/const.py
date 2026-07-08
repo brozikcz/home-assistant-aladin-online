@@ -5,3 +5,6 @@ LOGGER: Final = logging.getLogger(__package__)
 DOMAIN: Final = "aladin_online"
 NAME: Final = "Aladin online (Czech Republic)"
 URL: Final = "https://data-provider.chmi.cz/api/graphs/graf.meteogram/?x={}&y={}"
+
+CONF_RADAR_RADIUS: Final = "radar_radius"
+DEFAULT_RADAR_RADIUS: Final = 60
