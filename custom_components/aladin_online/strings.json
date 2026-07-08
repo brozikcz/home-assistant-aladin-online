@@ -8,12 +8,21 @@
 					"latitude": "Latitude",
 					"longitude": "Longitude"
 				}
+			},
+			"reconfigure": {
+				"title": "Aladin online (Czech Republic)",
+				"data": {
+					"latitude": "Latitude",
+					"longitude": "Longitude"
+				}
 			}
 		},
 		"abort": {
 			"already_configured": "Aladin online for this name is already configured.",
+			"reconfigure_successful": "Reconfiguration was successful.",
 			"service_unavailable": "Service is not available.",
-			"location_unavailable": "Location is not available."
+			"location_unavailable": "Location is not available.",
+			"unknown": "Unknown error connecting to the service."
 		}
 	},
 	"entity": {
