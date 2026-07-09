@@ -1,9 +1,7 @@
 from __future__ import annotations
-
-import io
 import math
+import io
 from typing import Any, Final
-
 from PIL import Image
 
 # CHMI Radar Bounding Box (EPSG:3857 approximations for the PNG)
@@ -24,7 +22,6 @@ COLOR_TO_DBZ = {
     (252, 252, 252): 60
 }
 
-# dBZ to mm/h mapping based on Marshall-Palmer relation
 DBZ_TO_MMH: Final = {
     4: 0.1, 8: 0.325, 12: 0.55, 16: 0.775,
     20: 1.0, 24: 3.25, 28: 5.5, 32: 7.75,
@@ -34,7 +31,7 @@ DBZ_TO_MMH: Final = {
 
 
 def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, int] | None:
-    """Convert GPS coordinates to pixel coordinates for the CHMI radar image using Web Mercator projection."""
+    """Convert GPS coordinates to pixel coordinates using the full image canvas."""
     if not (LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX):
         return None
 
@@ -46,10 +43,7 @@ def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, 
     y_max_merc = mercator_y(LAT_MAX)
     y_target_merc = mercator_y(lat)
 
-    # X axis remains linear
     x = int((lon - LON_MIN) / (LON_MAX - LON_MIN) * width)
-
-    # Y axis is interpolated using the Mercator scale (image Y=0 is top)
     y = int((y_max_merc - y_target_merc) / (y_max_merc - y_min_merc) * height)
 
     if 0 <= x < width and 0 <= y < height:
@@ -58,7 +52,7 @@ def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, 
 
 
 def get_dbz(r: int, g: int, b: int) -> int:
-    """Find the closest dBZ value for a given RGB color using Euclidean distance."""
+    """Find the closest dBZ value for a given RGB color. Returns 0 if it's a UI artifact."""
     dbz = 0
     min_distance = float("inf")
     for (cr, cg, cb), value in COLOR_TO_DBZ.items():
@@ -66,15 +60,19 @@ def get_dbz(r: int, g: int, b: int) -> int:
         if distance < min_distance:
             min_distance = distance
             dbz = value
+
+    # Safety threshold against black lines, text, and gray masks snapping to white (60 dBZ)
+    if min_distance > 1500:
+        return 0
+
     return dbz
 
 
 def is_precipitation_pixel(pixel: tuple[int, ...]) -> bool:
     """Determine if a pixel represents active precipitation based on alpha and color thresholds."""
-    if len(pixel) == 4:  # RGBA
+    if len(pixel) == 4:
         r, g, b, alpha = pixel
         return alpha > 0 and (r > 0 or g > 0 or b > 0)
-
     return any(c > 0 for c in pixel[:3])
 
 
@@ -88,8 +86,30 @@ def is_significant_rain(pixel: tuple[int, ...], threshold_mmh: float = 0.5) -> b
     return intensity >= threshold_mmh
 
 
-def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60) -> dict[str, Any]:
-    """Process the current radar image to find immediate rain data and scan for the nearest srážky."""
+def pixel_to_gps(x: int, y: int, width: int, height: int) -> tuple[float, float] | None:
+    """Reverse calculation from pixel to GPS coordinates using the full canvas."""
+    if not (0 <= x < width and 0 <= y < height):
+        return None
+
+    lon = LON_MIN + (x / width) * (LON_MAX - LON_MIN)
+
+    def mercator_y(lat_deg: float) -> float:
+        lat_rad = math.radians(lat_deg)
+        return math.log(math.tan(math.pi / 4 + lat_rad / 2))
+
+    y_min_merc = mercator_y(LAT_MIN)
+    y_max_merc = mercator_y(LAT_MAX)
+
+    y_target_merc = y_max_merc - (y / height) * (y_max_merc - y_min_merc)
+    lat_rad = 2 * (math.atan(math.exp(y_target_merc)) - math.pi / 4)
+    lat = math.degrees(lat_rad)
+
+    return round(lat, 6), round(lon, 6)
+
+
+def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60, threshold_mmh: float = 0.5) -> dict[
+    str, Any]:
+    """Process the current radar image to find immediate rain data and scan for the nearest precipitation."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
         width, height = img.size
@@ -102,46 +122,56 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60)
         pixels = img.load()
         pixel_val = pixels[px, py]
 
-        # 1. Evaluate rain exactly at the home coordinates
-        rain_now = is_precipitation_pixel(pixel_val)
+        rain_now = is_significant_rain(pixel_val, threshold_mmh)
         rain_now_value = 0.0
         if rain_now:
             r, g, b = pixel_val[:3]
             dbz = get_dbz(r, g, b)
             rain_now_value = DBZ_TO_MMH.get(dbz, 0.0)
 
-        # 2. Search for the nearest rain using an optimized square prstenec scan to avoid corner bias
-        nearest_distance = 0.0 if rain_now else None
+        nearest_distance = None
+        nearest_pixel = None
 
         if not rain_now:
             for r in range(1, radius + 1):
-                distances_in_ring = []
+                best_dist = float('inf')
+                best_px = None
 
                 for i in range(-r, r + 1):
-                    # Top and bottom horizontal edges
                     for dx, dy in [(i, -r), (i, r)]:
                         nx, ny = px + dx, py + dy
                         if 0 <= nx < width and 0 <= ny < height:
-                            if is_precipitation_pixel(pixels[nx, ny]):
-                                distances_in_ring.append(math.sqrt(dx * dx + dy * dy))
+                            if is_significant_rain(pixels[nx, ny], threshold_mmh):
+                                d = math.sqrt(dx * dx + dy * dy)
+                                if d < best_dist:
+                                    best_dist = d
+                                    best_px = (nx, ny)
 
-                    # Left and right vertical edges (skip corners to avoid duplicate evaluation)
                     if -r < i < r:
                         for dx, dy in [(-r, i), (r, i)]:
                             nx, ny = px + dx, py + dy
                             if 0 <= nx < width and 0 <= ny < height:
-                                if is_precipitation_pixel(pixels[nx, ny]):
-                                    distances_in_ring.append(math.sqrt(dx * dx + dy * dy))
+                                if is_significant_rain(pixels[nx, ny], threshold_mmh):
+                                    d = math.sqrt(dx * dx + dy * dy)
+                                    if d < best_dist:
+                                        best_dist = d
+                                        best_px = (nx, ny)
 
-                # If rain was detected within this ring layer, pick the true absolute minimum distance
-                if distances_in_ring:
-                    nearest_distance = min(distances_in_ring)
+                if best_px is not None:
+                    nearest_distance = best_dist
+                    nearest_pixel = best_px
                     break
+
+        nearest_gps = None
+        if nearest_pixel:
+            nearest_gps = pixel_to_gps(nearest_pixel[0], nearest_pixel[1], width, height)
 
         return {
             "rain_now": rain_now,
             "rain_now_value": rain_now_value,
-            "nearest_distance": round(nearest_distance, 1) if nearest_distance is not None else None
+            "nearest_distance": round(nearest_distance, 1) if nearest_distance is not None else None,
+            "nearest_pixel": nearest_pixel,
+            "nearest_gps": nearest_gps
         }
 
 
@@ -158,7 +188,6 @@ def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mm
         px, py = pixel_coords
         pixels = img.load()
 
-        # Scan a 3x3 matrix (1 pixel padding around the center coordinate)
         for dx in range(-1, 2):
             for dy in range(-1, 2):
                 nx, ny = px + dx, py + dy
@@ -169,7 +198,7 @@ def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mm
 
 
 def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, window_radius: int = 3,
-                                   threshold_mmh: float = 0.5) -> int:
+                                   threshold_mmh: float = 0.0) -> int:
     """Calculate spatial rain probability (%) within a bounded window around the target coordinates."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
@@ -185,7 +214,6 @@ def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, w
         rain_pixels = 0
         total_valid_pixels = 0
 
-        # Scan the spatial probability window (default 7x7 grid)
         for dx in range(-window_radius, window_radius + 1):
             for dy in range(-window_radius, window_radius + 1):
                 nx, ny = px + dx, py + dy
@@ -195,7 +223,9 @@ def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, w
                         if is_significant_rain(pixels[nx, ny], threshold_mmh):
                             rain_pixels += 1
                     else:
-                        if is_precipitation_pixel(pixels[nx, ny]):
+                        # For probability, we catch even light rain unless threshold is strictly set
+                        if is_precipitation_pixel(pixels[nx, ny]) and get_dbz(pixels[nx, ny][0], pixels[nx, ny][1],
+                                                                              pixels[nx, ny][2]) > 0:
                             rain_pixels += 1
 
         if total_valid_pixels == 0:
