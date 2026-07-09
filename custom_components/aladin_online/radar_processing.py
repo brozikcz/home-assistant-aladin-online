@@ -129,6 +129,16 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
             dbz = get_dbz(r, g, b)
             rain_now_value = DBZ_TO_MMH.get(dbz, 0.0)
 
+        rain_now_pixel_count = 0
+
+        for dx in range(-1, 2):
+            for dy in range(-1, 2):
+                nx, ny = px + dx, py + dy
+                if 0 <= nx < width and 0 <= ny < height:
+                    pixel_val = pixels[nx, ny]
+                    if is_significant_rain(pixel_val, threshold_mmh):
+                        rain_now_pixel_count += 1
+
         nearest_distance = None
         nearest_pixel = None
 
@@ -169,6 +179,7 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
         return {
             "rain_now": rain_now,
             "rain_now_value": rain_now_value,
+            "rain_now_pixel_count": rain_now_pixel_count,
             "nearest_distance": round(nearest_distance, 1) if nearest_distance is not None else None,
             "nearest_pixel": nearest_pixel,
             "nearest_gps": nearest_gps

@@ -23,6 +23,7 @@ class AladinRadar:
     nearest_distance: float | None
     minutes_until_rain: int | None
     rain_probability: int
+    rain_now_pixel_count: int
     forecast_probabilities: dict[str, int]
 
 
@@ -63,7 +64,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         rounded_now = now - timedelta(minutes=now.minute % 5, seconds=now.second, microseconds=now.microsecond)
 
         # 1. Stažení aktuálního snímku z_max3d_masked (s fallbackem o 5 minut zpět)
-        radar_info: dict[str, Any] = {"rain_now": False, "rain_now_value": 0.0, "nearest_distance": None}
+        radar_info: dict[str, Any] = {"rain_now": False, "rain_now_pixel_count": 0, "rain_now_value": 0.0, "nearest_distance": None}
 
         for offset in (0, 5):
             target_time = rounded_now - timedelta(minutes=offset)
@@ -80,8 +81,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     image_bytes = await response.read()
                     radar_info = await self.hass.async_add_executor_job(get_radar_info, image_bytes, lat, lon, radius)
                     LOGGER.debug(
-                        "Radar info for GPS [%s, %s]: rain_now=%s, nearest_distance_px=%s, nearest_pixel=%s, nearest_gps=%s",
-                        lat, lon, radar_info["rain_now"], radar_info["nearest_distance"],
+                        "Radar info for GPS [%s, %s]: rain_now=%s, rain_now_pixel_count=%s, nearest_distance_px=%s, nearest_pixel=%s, nearest_gps=%s",
+                        lat, lon, radar_info["rain_now"], radar_info["rain_now_pixel_count"], radar_info["nearest_distance"],
                         radar_info.get("nearest_pixel"), radar_info.get("nearest_gps")
                     )
                     break
@@ -161,6 +162,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 nearest_distance=radar_info["nearest_distance"],
                 minutes_until_rain=minutes_until_rain,
                 rain_probability=rain_probability,
+                rain_now_pixel_count=radar_info["rain_now_pixel_count"],
                 forecast_probabilities=forecast_probabilities,
             )
         )

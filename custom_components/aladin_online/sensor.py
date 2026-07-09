@@ -8,7 +8,7 @@ from homeassistant.const import (
 	UnitOfPressure,
 	UnitOfSpeed,
 	UnitOfTemperature,
-	UnitOfVolumetricFlux,
+	UnitOfVolumetricFlux, UnitOfTime,
 )
 from homeassistant.components.sensor import (
 	SensorDeviceClass,
@@ -48,6 +48,7 @@ class SensorType(StrEnum):
 	RADAR_MINUTES_UNTIL_RAIN = "radar_minutes_until_rain"
 	RADAR_RAIN_INTENSITY = "radar_rain_intensity"
 	RADAR_RAIN_PROBABILITY = "radar_rain_probability"
+	RADAR_RAIN_NOW_PIXEL_COUNT = "radar_rain_now_pixel_count"
 
 @dataclass(frozen=True, kw_only=True)
 class SensorEntityDescription(ComponentSensorEntityDescription):
@@ -67,7 +68,7 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		key=SensorType.RADAR_MINUTES_UNTIL_RAIN,
 		name="Radar minutes until rain",
 		icon="mdi:clock-outline",
-		native_unit_of_measurement="min",
+		native_unit_of_measurement=UnitOfTime.MINUTES,
 		suggested_display_precision=0,
 		state_class=SensorStateClass.MEASUREMENT,
 		value_func=lambda data: data.minutes_until_rain,
@@ -89,6 +90,14 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		suggested_display_precision=0,
 		state_class=SensorStateClass.MEASUREMENT,
 		value_func=lambda data: data.rain_probability,
+	),
+	SensorType.RADAR_RAIN_NOW_PIXEL_COUNT: SensorEntityDescription(
+		key=SensorType.RADAR_RAIN_NOW_PIXEL_COUNT,
+		name="Radar rain now pixel count",
+		native_unit_of_measurement="px",
+		suggested_display_precision=0,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.rain_now_pixel_count,
 	),
 }
 
