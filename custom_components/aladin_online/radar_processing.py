@@ -32,6 +32,8 @@ DBZ_TO_MMH: Final = {
 
 def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, int] | None:
     """Convert GPS coordinates to pixel coordinates using the full image canvas."""
+    if lat is None or lon is None:
+        return None
     if not (LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX):
         return None
 
@@ -45,6 +47,11 @@ def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, 
 
     x = int((lon - LON_MIN) / (LON_MAX - LON_MIN) * width)
     y = int((y_max_merc - y_target_merc) / (y_max_merc - y_min_merc) * height)
+
+    if x == width:
+        x = width - 1
+    if y == height:
+        y = height - 1
 
     if 0 <= x < width and 0 <= y < height:
         return x, y
@@ -86,6 +93,29 @@ def is_significant_rain(pixel: tuple[int, ...], threshold_mmh: float = 0.5) -> b
     return intensity >= threshold_mmh
 
 
+def evaluate_pixel_cloud(px: int, py: int, width: int, height: int, pixels: Any, window_size: int, threshold_mmh: float) -> tuple[int, float]:
+    """Scans the window_size matrix around px, py and returns (matching_pixel_count, max_intensity)."""
+    half = window_size // 2
+    matching_pixel_count = 0
+    max_intensity = 0.0
+
+    for dx in range(-half, half + 1):
+        for dy in range(-half, half + 1):
+            nx, ny = px + dx, py + dy
+            if 0 <= nx < width and 0 <= ny < height:
+                pixel_val = pixels[nx, ny]
+                r, g, b = pixel_val[:3]
+                dbz = get_dbz(r, g, b)
+                intensity = DBZ_TO_MMH.get(dbz, 0.0)
+
+                if intensity >= threshold_mmh:
+                    matching_pixel_count += 1
+                    if intensity > max_intensity:
+                        max_intensity = intensity
+
+    return matching_pixel_count, max_intensity
+
+
 def pixel_to_gps(x: int, y: int, width: int, height: int) -> tuple[float, float] | None:
     """Reverse calculation from pixel to GPS coordinates using the full canvas."""
     if not (0 <= x < width and 0 <= y < height):
@@ -107,8 +137,7 @@ def pixel_to_gps(x: int, y: int, width: int, height: int) -> tuple[float, float]
     return round(lat, 6), round(lon, 6)
 
 
-def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60, threshold_mmh: float = 0.5) -> dict[
-    str, Any]:
+def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60, threshold_mmh: float = 0.5, window_size: int = 3, size_threshold: int = 2) -> dict[str, Any]:
     """Process the current radar image to find immediate rain data and scan for the nearest precipitation."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
@@ -116,42 +145,34 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
         pixel_coords = gps_to_pixel(lat, lon, width, height)
 
         if not pixel_coords:
-            return {"rain_now": False, "rain_now_value": 0.0, "nearest_distance": None}
+            return {
+                "rain_now": False,
+                "rain_now_value": 0.0,
+                "rain_now_pixel_count": 0,
+                "nearest_distance": None,
+            }
 
         px, py = pixel_coords
         pixels = img.load()
-        pixel_val = pixels[px, py]
 
-        rain_now = is_significant_rain(pixel_val, threshold_mmh)
-        rain_now_value = 0.0
-        if rain_now:
-            r, g, b = pixel_val[:3]
-            dbz = get_dbz(r, g, b)
-            rain_now_value = DBZ_TO_MMH.get(dbz, 0.0)
-
-        rain_now_pixel_count = 0
-
-        for dx in range(-1, 2):
-            for dy in range(-1, 2):
-                nx, ny = px + dx, py + dy
-                if 0 <= nx < width and 0 <= ny < height:
-                    pixel_val = pixels[nx, ny]
-                    if is_significant_rain(pixel_val, threshold_mmh):
-                        rain_now_pixel_count += 1
+        rain_now_pixel_count, rain_now_value = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh)
+        rain_now = (rain_now_pixel_count >= size_threshold)
+        if not rain_now:
+            rain_now_value = 0.0
 
         nearest_distance = None
-        nearest_pixel = None
+        best_px = None
 
         if not rain_now:
             for r in range(1, radius + 1):
                 best_dist = float('inf')
-                best_px = None
 
                 for i in range(-r, r + 1):
                     for dx, dy in [(i, -r), (i, r)]:
                         nx, ny = px + dx, py + dy
                         if 0 <= nx < width and 0 <= ny < height:
-                            if is_significant_rain(pixels[nx, ny], threshold_mmh):
+                            count, _ = evaluate_pixel_cloud(nx, ny, width, height, pixels, window_size, threshold_mmh)
+                            if count >= size_threshold:
                                 d = math.sqrt(dx * dx + dy * dy)
                                 if d < best_dist:
                                     best_dist = d
@@ -161,7 +182,8 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
                         for dx, dy in [(-r, i), (r, i)]:
                             nx, ny = px + dx, py + dy
                             if 0 <= nx < width and 0 <= ny < height:
-                                if is_significant_rain(pixels[nx, ny], threshold_mmh):
+                                count, _ = evaluate_pixel_cloud(nx, ny, width, height, pixels, window_size, threshold_mmh)
+                                if count >= size_threshold:
                                     d = math.sqrt(dx * dx + dy * dy)
                                     if d < best_dist:
                                         best_dist = d
@@ -169,25 +191,19 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
 
                 if best_px is not None:
                     nearest_distance = best_dist
-                    nearest_pixel = best_px
                     break
 
-        nearest_gps = None
-        if nearest_pixel:
-            nearest_gps = pixel_to_gps(nearest_pixel[0], nearest_pixel[1], width, height)
 
         return {
             "rain_now": rain_now,
             "rain_now_value": rain_now_value,
             "rain_now_pixel_count": rain_now_pixel_count,
             "nearest_distance": round(nearest_distance, 1) if nearest_distance is not None else None,
-            "nearest_pixel": nearest_pixel,
-            "nearest_gps": nearest_gps
         }
 
 
-def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mmh: float = 0.5) -> bool:
-    """Check a 3x3 km neighborhood in the forecast image for the presence of significant rain."""
+def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mmh: float = 0.5, window_size: int = 3, size_threshold: int = 2) -> bool:
+    """Check neighborhood in the forecast image for the presence of significant rain."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
         width, height = img.size
@@ -199,13 +215,8 @@ def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mm
         px, py = pixel_coords
         pixels = img.load()
 
-        for dx in range(-1, 2):
-            for dy in range(-1, 2):
-                nx, ny = px + dx, py + dy
-                if 0 <= nx < width and 0 <= ny < height:
-                    if is_significant_rain(pixels[nx, ny], threshold_mmh):
-                        return True
-        return False
+        count, _ = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh)
+        return count >= size_threshold
 
 
 def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, window_radius: int = 3,

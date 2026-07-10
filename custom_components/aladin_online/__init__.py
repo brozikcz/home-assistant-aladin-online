@@ -15,7 +15,7 @@ PLATFORMS: Final = [
 
 
 async def async_setup_entry(hass: core.HomeAssistant, config_entry: AladinOnlineConfigEntry) -> bool:
-	coordinator = AladinRadarCoordinator(hass, config_entry.data)
+	coordinator = AladinRadarCoordinator(hass, config_entry)
 
 	await coordinator.async_config_entry_first_refresh()
 

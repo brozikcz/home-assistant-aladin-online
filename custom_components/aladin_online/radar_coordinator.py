@@ -6,13 +6,19 @@ from types import MappingProxyType
 from dataclasses import dataclass
 
 from homeassistant import core
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt
 
 from .aladin_online import AladinOnlineCoordinator, AladinWeather
-from .const import DOMAIN, LOGGER, CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS
+from .const import (
+    DOMAIN, LOGGER, CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS,
+    CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH,
+    CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE,
+    CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
+)
 from .radar_processing import get_radar_info, check_forecast_rain, calculate_forecast_probability
 
 
@@ -34,16 +40,17 @@ class AladinData:
 
 
 class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
-    def __init__(self, hass: core.HomeAssistant, config: MappingProxyType) -> None:
+    def __init__(self, hass: core.HomeAssistant, config_entry: ConfigEntry) -> None:
         super().__init__(
             hass,
             LOGGER,
+            config_entry=config_entry,
             name=DOMAIN,
             update_interval=timedelta(minutes=5),
             update_method=self._async_update_data
         )
-        self._config = config
-        self.aladin_coordinator = AladinOnlineCoordinator(hass, config)
+        self._config = config_entry.data
+        self.aladin_coordinator = AladinOnlineCoordinator(hass, config_entry.data)
         self._last_aladin_update = None
 
     async def _async_update_data(self) -> AladinData:
@@ -56,7 +63,12 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
         lat = self._config.get(CONF_LATITUDE, self.hass.config.latitude)
         lon = self._config.get(CONF_LONGITUDE, self.hass.config.longitude)
-        radius = self._config.get(CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS)
+
+        options = self.config_entry.options
+        radius = int(options.get(CONF_RADAR_RADIUS, self._config.get(CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS)))
+        threshold_mmh = float(options.get(CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH))
+        window_size = int(options.get(CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE))
+        size_threshold = int(options.get(CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD))
 
         session = aiohttp_client.async_get_clientsession(self.hass)
 
@@ -79,11 +91,10 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
                 if response.status == HTTPStatus.OK:
                     image_bytes = await response.read()
-                    radar_info = await self.hass.async_add_executor_job(get_radar_info, image_bytes, lat, lon, radius)
+                    radar_info = await self.hass.async_add_executor_job(get_radar_info, image_bytes, lat, lon, radius, threshold_mmh, window_size, size_threshold)
                     LOGGER.debug(
-                        "Radar info for GPS [%s, %s]: rain_now=%s, rain_now_pixel_count=%s, nearest_distance_px=%s, nearest_pixel=%s, nearest_gps=%s",
-                        lat, lon, radar_info["rain_now"], radar_info["rain_now_pixel_count"], radar_info["nearest_distance"],
-                        radar_info.get("nearest_pixel"), radar_info.get("nearest_gps")
+                        "Radar info for GPS [%s, %s]: rain_now=%s, rain_now_pixel_count=%s, nearest_distance=%s",
+                        lat, lon, radar_info["rain_now"], radar_info["rain_now_pixel_count"], radar_info["nearest_distance"]
                     )
                     break
 
@@ -130,7 +141,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
                         if temp_minutes is None:
                             has_rain = await self.hass.async_add_executor_job(check_forecast_rain, image_bytes,
-                                                                              lat, lon)
+                                                                              lat, lon, threshold_mmh, window_size, size_threshold)
                             if has_rain:
                                 LOGGER.info("Significant rain forecasted in %d minutes", minutes)
                                 temp_minutes = minutes
