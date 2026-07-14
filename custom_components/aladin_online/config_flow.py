@@ -16,6 +16,7 @@ from .const import (
 	CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH,
 	CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE,
 	CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
+	CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
 )
 from .errors import LocationUnavailable, ServiceUnavailable
 from typing import Any, Dict
@@ -167,6 +168,18 @@ class AladinOnlineOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 						min=1,
 						max=max_size_threshold,
 						mode=selector.NumberSelectorMode.BOX,
+					)
+				),
+				vol.Optional(
+					CONF_RADAR_IMAGE_TYPE,
+					default=str(self.config_entry.options.get(CONF_RADAR_IMAGE_TYPE, DEFAULT_RADAR_IMAGE_TYPE)),
+				): selector.SelectSelector(
+					selector.SelectSelectorConfig(
+						options=[
+							selector.SelectOptionDict(value=RADAR_IMAGE_TYPE_MAX3D, label="MAX_Z_mask"),
+							selector.SelectOptionDict(value=RADAR_IMAGE_TYPE_CAPPI, label="PseudoCAPPI 2km"),
+						],
+						mode=selector.SelectSelectorMode.DROPDOWN,
 					)
 				),
 			}),

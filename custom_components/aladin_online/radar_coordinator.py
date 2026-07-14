@@ -18,6 +18,7 @@ from .const import (
     CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH,
     CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE,
     CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
+    CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
 )
 from .radar_processing import get_radar_info, check_forecast_rain, calculate_forecast_probability
 
@@ -90,13 +91,16 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         threshold_mmh = float(options.get(CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH))
         window_size = int(options.get(CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE))
         size_threshold = int(options.get(CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD))
+        image_type = options.get(CONF_RADAR_IMAGE_TYPE, DEFAULT_RADAR_IMAGE_TYPE)
+
+        LOGGER.debug("Fetching radar data using mode: %s", image_type)
 
         session = aiohttp_client.async_get_clientsession(self.hass)
 
         # Zbytek radar logiky zůstává stejný. rounded_now se spočítá korektně.
         rounded_now = now - timedelta(minutes=now.minute % 5, seconds=now.second, microseconds=now.microsecond)
 
-        # 1. Stažení aktuálního snímku z_max3d_masked (s fallbackem o 5 minut zpět)
+        # 1. Stažení aktuálního snímku (s fallbackem o 5 minut zpět)
         radar_info: dict[str, Any] = {"rain_now": False, "rain_now_pixel_count": 0, "rain_now_value": 0.0, "nearest_distance": None}
 
         for offset in (0, 5):
@@ -104,7 +108,10 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             date_str = target_time.strftime("%Y%m%d")
             time_str = target_time.strftime("%H%M")
 
-            current_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_max3d_masked/pacz2gmaps3.z_max3d.{date_str}.{time_str}.0.png"
+            if image_type == RADAR_IMAGE_TYPE_CAPPI:
+                current_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_cappi020/pacz2gmaps3.z_cappi020.{date_str}.{time_str}.0.png"
+            else:  # RADAR_IMAGE_TYPE_MAX3D
+                current_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_max3d_masked/pacz2gmaps3.z_max3d.{date_str}.{time_str}.0.png"
 
             try:
                 LOGGER.debug("Fetching current radar image (offset -%d min): %s", offset, current_url)
@@ -126,7 +133,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             except Exception as ex:
                 LOGGER.error("Error fetching current radar image: %s", ex)
 
-        # 2. Stažení forecast snímků z_max3d_fct_masked s fallbackem
+        # 2. Stažení forecast snímků s fallbackem
         minutes_until_rain = None
         forecast_probabilities: dict[str, int] = {}
 
@@ -145,7 +152,10 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 tgt_date = forecast_target.strftime("%Y%m%d")
                 tgt_time = forecast_target.strftime("%H%M")
 
-                forecast_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_max3d_fct_masked/{base_date}.{base_time}/pacz2gmaps3.fct_z_max.{tgt_date}.{tgt_time}.{minutes}.png"
+                if image_type == RADAR_IMAGE_TYPE_CAPPI:
+                    forecast_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_cappi020_fct/{base_date}.{base_time}/pacz2gmaps3.fct_z_cappi020.{tgt_date}.{tgt_time}.{minutes}.png"
+                else:  # RADAR_IMAGE_TYPE_MAX3D
+                    forecast_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_max3d_fct_masked/{base_date}.{base_time}/pacz2gmaps3.fct_z_max.{tgt_date}.{tgt_time}.{minutes}.png"
 
                 try:
                     LOGGER.debug("Fetching forecast radar image (+%d min, base %s): %s", minutes, base_time,
