@@ -1,17 +1,17 @@
 from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import timedelta
 from http import HTTPStatus
 from typing import Any
-from types import MappingProxyType
-from dataclasses import dataclass
 
 from homeassistant import core
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt
-
 from .aladin_online import AladinOnlineCoordinator, AladinWeather
 from .const import (
     DOMAIN, LOGGER, CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS,
@@ -46,20 +46,41 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             LOGGER,
             config_entry=config_entry,
             name=DOMAIN,
-            update_interval=timedelta(minutes=5),
+            update_interval=None,
             update_method=self._async_update_data
         )
         self._config = config_entry.data
         self.aladin_coordinator = AladinOnlineCoordinator(hass, config_entry.data)
         self._last_aladin_update = None
 
+        # Fixní cron-like trigger pro spuštění v minutách: 1, 6, 11, 16, atd.
+        # async_on_unload zajistí odstranění časovače při odebrání integrace
+        config_entry.async_on_unload(
+            async_track_time_change(
+                self.hass,
+                self._handle_timer,
+                minute=[1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56],
+                second=0
+            )
+        )
+
+    async def _handle_timer(self, now: dt.datetime) -> None:
+        """Callback vyvolaný přesně podle async_track_time_pattern."""
+        await self.async_request_refresh()
+
     async def _async_update_data(self) -> AladinData:
         now = dt.utcnow()
 
-        if self._last_aladin_update is None or now - self._last_aladin_update >= timedelta(minutes=30):
+        # Aladin update - spouštíme jen v definovaných minutách (01, 06, 31, 36)
+        # nebo pokud integrace ještě nemá data.
+        if self._last_aladin_update is None or now.minute in (1, 6, 31, 36):
             LOGGER.debug("Updating Aladin weather data")
-            await self.aladin_coordinator.async_refresh()
-            self._last_aladin_update = now
+            try:
+                await self.aladin_coordinator.async_refresh()
+                self._last_aladin_update = now
+            except Exception as ex:
+                # Ošetření výjimky zajistí, že při výpadku Aladina nespadne update Radaru
+                LOGGER.error("Error updating Aladin weather data: %s", ex)
 
         lat = self._config.get(CONF_LATITUDE, self.hass.config.latitude)
         lon = self._config.get(CONF_LONGITUDE, self.hass.config.longitude)
@@ -72,7 +93,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
         session = aiohttp_client.async_get_clientsession(self.hass)
 
-        # Zaokrouhlení na 5min blok
+        # Zbytek radar logiky zůstává stejný. rounded_now se spočítá korektně.
         rounded_now = now - timedelta(minutes=now.minute % 5, seconds=now.second, microseconds=now.microsecond)
 
         # 1. Stažení aktuálního snímku z_max3d_masked (s fallbackem o 5 minut zpět)
