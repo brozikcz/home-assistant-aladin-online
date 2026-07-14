@@ -193,7 +193,6 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
                     nearest_distance = best_dist
                     break
 
-
         return {
             "rain_now": rain_now,
             "rain_now_value": rain_now_value,
@@ -219,8 +218,8 @@ def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mm
         return count >= size_threshold
 
 
-def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, window_radius: int = 3,
-                                   threshold_mmh: float = 0.0) -> int:
+def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, window_size: int = 3,
+                                   threshold_mmh: float = 0.5) -> int:
     """Calculate spatial rain probability (%) within a bounded window around the target coordinates."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
@@ -233,24 +232,6 @@ def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, w
         px, py = pixel_coords
         pixels = img.load()
 
-        rain_pixels = 0
-        total_valid_pixels = 0
+        rain_pixels, _ = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh)
 
-        for dx in range(-window_radius, window_radius + 1):
-            for dy in range(-window_radius, window_radius + 1):
-                nx, ny = px + dx, py + dy
-                if 0 <= nx < width and 0 <= ny < height:
-                    total_valid_pixels += 1
-                    if threshold_mmh > 0.0:
-                        if is_significant_rain(pixels[nx, ny], threshold_mmh):
-                            rain_pixels += 1
-                    else:
-                        # For probability, we catch even light rain unless threshold is strictly set
-                        if is_precipitation_pixel(pixels[nx, ny]) and get_dbz(pixels[nx, ny][0], pixels[nx, ny][1],
-                                                                              pixels[nx, ny][2]) > 0:
-                            rain_pixels += 1
-
-        if total_valid_pixels == 0:
-            return 0
-
-        return int((rain_pixels / total_valid_pixels) * 100)
+        return int((rain_pixels / (window_size*window_size)) * 100)

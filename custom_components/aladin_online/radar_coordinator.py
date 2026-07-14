@@ -126,7 +126,6 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             except Exception as ex:
                 LOGGER.error("Error fetching current radar image: %s", ex)
 
-        # 2. Stažení forecast snímků z_max3d_fct_masked
         # 2. Stažení forecast snímků z_max3d_fct_masked s fallbackem
         minutes_until_rain = None
         forecast_probabilities: dict[str, int] = {}
@@ -156,15 +155,22 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     if response.status == HTTPStatus.OK:
                         image_bytes = await response.read()
 
-                        prob = await self.hass.async_add_executor_job(calculate_forecast_probability,
-                                                                      image_bytes, lat, lon)
+                        # Sjednocení parametrů citlivosti pro výpočet pravděpodobnosti
+                        prob = await self.hass.async_add_executor_job(
+                            calculate_forecast_probability,
+                            image_bytes,
+                            lat,
+                            lon,
+                            window_size,
+                            threshold_mmh
+                        )
                         temp_probabilities[f"{minutes}min"] = prob
 
                         if temp_minutes is None:
                             has_rain = await self.hass.async_add_executor_job(check_forecast_rain, image_bytes,
                                                                               lat, lon, threshold_mmh, window_size, size_threshold)
                             if has_rain:
-                                LOGGER.info("Significant rain forecasted in %d minutes", minutes)
+                                LOGGER.debug("Significant rain forecasted in %d minutes", minutes)
                                 temp_minutes = minutes
 
                     elif response.status == HTTPStatus.NOT_FOUND:
@@ -184,7 +190,10 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 minutes_until_rain = temp_minutes
                 break
 
-        rain_probability = max(forecast_probabilities.values()) if forecast_probabilities else 0
+        # Zahrnutí aktuálního deště (rain_now = 100% pravděpodobnost srážek) do celkové pravděpodobnosti
+        current_rain_prob = 100 if radar_info["rain_now"] else 0
+        all_probabilities = list(forecast_probabilities.values()) + [current_rain_prob]
+        rain_probability = max(all_probabilities) if all_probabilities else 0
 
         return AladinData(
             weather=self.aladin_coordinator.data,
