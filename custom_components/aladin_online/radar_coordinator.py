@@ -60,7 +60,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             async_track_time_change(
                 self.hass,
                 self._handle_timer,
-                minute=[1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56],
+                minute=[2, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 57],
                 second=0
             )
         )
@@ -74,7 +74,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
         # Aladin update - spouštíme jen v definovaných minutách (01, 06, 31, 36)
         # nebo pokud integrace ještě nemá data.
-        if self._last_aladin_update is None or now.minute in (1, 6, 31, 36):
+        if self._last_aladin_update is None or now.minute in (2, 7, 32, 37):
             LOGGER.debug("Updating Aladin weather data")
             try:
                 await self.aladin_coordinator.async_refresh()
