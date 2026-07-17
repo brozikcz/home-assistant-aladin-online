@@ -17,6 +17,7 @@ from .const import (
 	CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE,
 	CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
 	CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
+	CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY,
 )
 from .errors import LocationUnavailable, ServiceUnavailable
 from typing import Any, Dict
@@ -32,6 +33,7 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 					CONF_NAME: user_input[CONF_NAME],
 					CONF_LATITUDE: user_input[CONF_LATITUDE],
 					CONF_LONGITUDE: user_input[CONF_LONGITUDE],
+					CONF_WEATHER_ENTITY: user_input.get(CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY),
 				}
 				await self.async_set_unique_id(user_input[CONF_NAME])
 				self._abort_if_unique_id_configured()
@@ -55,6 +57,12 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 				vol.Required(CONF_NAME, default=self.hass.config.location_name): str,
 				vol.Required(CONF_LATITUDE, default=self.hass.config.latitude): cv.latitude,
 				vol.Required(CONF_LONGITUDE, default=self.hass.config.longitude): cv.longitude,
+				vol.Optional(
+					CONF_WEATHER_ENTITY,
+					default=self.config_entry.data.get(CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY) if hasattr(self, 'config_entry') else DEFAULT_WEATHER_ENTITY,
+				): selector.EntitySelector(
+					selector.EntitySelectorConfig(domain="weather")
+				),
 			}),
 			errors=errors,
 		)
@@ -181,6 +189,15 @@ class AladinOnlineOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 						],
 						mode=selector.SelectSelectorMode.DROPDOWN,
 					)
+				),
+				vol.Optional(
+					CONF_WEATHER_ENTITY,
+					description={"suggested_value": self.config_entry.options.get(CONF_WEATHER_ENTITY,
+					                                                              self.config_entry.data.get(
+						                                                              CONF_WEATHER_ENTITY,
+						                                                              DEFAULT_WEATHER_ENTITY))},
+				): selector.EntitySelector(
+					selector.EntitySelectorConfig(domain="weather")
 				),
 			}),
 		)

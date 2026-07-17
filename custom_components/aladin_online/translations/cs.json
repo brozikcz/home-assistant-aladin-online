@@ -6,16 +6,30 @@
 				"data": {
 					"name": "Název",
 					"latitude": "Zeměpisná šířka",
-					"longitude": "Zeměpisná délka"
+					"longitude": "Zeměpisná délka",
+					"weather_entity": "Zdrojová entita počasí (volitelné)"
 				}
 			},
 			"reconfigure": {
 				"title": "Aladin online (Česká republika)",
 				"data": {
 					"latitude": "Zeměpisná šířka",
-					"longitude": "Zeměpisná délka"
+					"longitude": "Zeměpisná délka",
+					"weather_entity": "Zdrojová entita počasí (pro kompenzaci větru/vlhkosti)"
 				}
 			}
+		},
+		"options": {
+			"step": {
+				"init": {
+					"title": "Volby Aladin online",
+					"data": {
+						"weather_entity": "Zdrojová entita počasí (volitelné)"
+					},
+					"description": {
+						"weather_entity": "Vyberte weather entitu pro kompenzaci snosu větrem a virga. Pokud nevyberete, provoz bude v režimu čistého radaru (bez kompenzace)."
+					}
+				}			}
 		},
 		"abort": {
 			"already_configured": "Aladin online pro tento název je již nastaven.",

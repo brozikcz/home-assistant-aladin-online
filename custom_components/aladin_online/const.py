@@ -22,3 +22,6 @@ CONF_RADAR_IMAGE_TYPE: Final = "radar_image_type"
 RADAR_IMAGE_TYPE_MAX3D: Final = "max3d"
 RADAR_IMAGE_TYPE_CAPPI: Final = "cappi"
 DEFAULT_RADAR_IMAGE_TYPE: Final = RADAR_IMAGE_TYPE_CAPPI
+
+CONF_WEATHER_ENTITY: Final = "weather_entity"
+DEFAULT_WEATHER_ENTITY: Final = None

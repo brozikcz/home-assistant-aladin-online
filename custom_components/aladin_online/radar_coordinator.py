@@ -19,6 +19,7 @@ from .const import (
     CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE,
     CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
     CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
+    CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY,
 )
 from .radar_processing import get_radar_info, check_forecast_rain, calculate_forecast_probability
 
@@ -93,7 +94,50 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         size_threshold = int(options.get(CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD))
         image_type = options.get(CONF_RADAR_IMAGE_TYPE, DEFAULT_RADAR_IMAGE_TYPE)
 
-        LOGGER.debug("Fetching radar data using mode: %s", image_type)
+        # Pure radar defaults: no sensor fusion unless user selects a weather entity
+        humidity: float | None = None
+        wind_speed_ms: float = 0.0
+        wind_bearing_deg: int = 0
+
+        weather_entity_id = options.get(CONF_WEATHER_ENTITY, self._config.get(CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY))
+        source_used = "pure_radar"
+
+        if weather_entity_id:
+            state = self.hass.states.get(weather_entity_id)
+            if state is not None and state.state not in ("unavailable", "unknown"):
+                try:
+                    raw_humidity = state.attributes.get("humidity")
+                    raw_wind_speed = state.attributes.get("wind_speed")
+                    raw_wind_bearing = state.attributes.get("wind_bearing")
+
+                    if raw_humidity is not None:
+                        humidity = float(raw_humidity)
+                        source_used = f"entity:{weather_entity_id}"
+                    else:
+                        LOGGER.warning("Zdrojová entita %s neobsahuje atribut 'humidity', fallback na pure_radar", weather_entity_id)
+                        source_used = f"entity:{weather_entity_id} (missing humidity)"
+
+                    if raw_wind_speed is not None:
+                        wind_speed_ms = max(0.0, float(raw_wind_speed) / 3.6)
+
+                    if raw_wind_bearing is not None:
+                        wind_bearing_deg = int(raw_wind_bearing) % 360
+
+                except Exception as ex:
+                    LOGGER.error("Chyba při parsování atributů z entity %s: %s", weather_entity_id, ex)
+                    source_used = f"entity:{weather_entity_id} (parse error)"
+            else:
+                LOGGER.debug("Zdrojová entita %s není dostupná (stav: %s).", weather_entity_id, state.state if state else "Not Found")
+
+        # Final informational log about chosen fusion source
+        LOGGER.debug(
+            "Fetching radar data using mode: %s (humidity=%s, wind=%.1f m/s from %d°) - source=%s",
+            image_type,
+            f"{humidity:.1f}%" if humidity is not None else "None (pure_radar)",
+            wind_speed_ms,
+            wind_bearing_deg,
+            source_used,
+        )
 
         session = aiohttp_client.async_get_clientsession(self.hass)
 
@@ -119,7 +163,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
                 if response.status == HTTPStatus.OK:
                     image_bytes = await response.read()
-                    radar_info = await self.hass.async_add_executor_job(get_radar_info, image_bytes, lat, lon, radius, threshold_mmh, window_size, size_threshold)
+                    radar_info = await self.hass.async_add_executor_job(get_radar_info, image_bytes, lat, lon, radius, threshold_mmh, window_size, size_threshold, humidity, wind_speed_ms, wind_bearing_deg)
                     LOGGER.debug(
                         "Radar info for GPS [%s, %s]: rain_now=%s, rain_now_pixel_count=%s, nearest_distance=%s",
                         lat, lon, radar_info["rain_now"], radar_info["rain_now_pixel_count"], radar_info["nearest_distance"]
@@ -172,13 +216,16 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             lat,
                             lon,
                             window_size,
-                            threshold_mmh
+                            threshold_mmh,
+                            humidity,
+                            wind_speed_ms,
+                            wind_bearing_deg
                         )
                         temp_probabilities[f"{minutes}min"] = prob
 
                         if temp_minutes is None:
                             has_rain = await self.hass.async_add_executor_job(check_forecast_rain, image_bytes,
-                                                                              lat, lon, threshold_mmh, window_size, size_threshold)
+                                                                              lat, lon, threshold_mmh, window_size, size_threshold, humidity, wind_speed_ms, wind_bearing_deg)
                             if has_rain:
                                 LOGGER.debug("Significant rain forecasted in %d minutes", minutes)
                                 temp_minutes = minutes
