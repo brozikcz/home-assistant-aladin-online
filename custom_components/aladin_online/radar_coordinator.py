@@ -193,6 +193,11 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
             for minutes in range(10, 70, 10):
                 forecast_target = base_time_dt + timedelta(minutes=minutes)
+
+                real_minutes_until = int((forecast_target - now).total_seconds() / 60)
+                if real_minutes_until < 0:
+                    continue
+
                 tgt_date = forecast_target.strftime("%Y%m%d")
                 tgt_time = forecast_target.strftime("%H%M")
 
@@ -221,14 +226,14 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             wind_speed_ms,
                             wind_bearing_deg
                         )
-                        temp_probabilities[f"{minutes}min"] = prob
+                        temp_probabilities[f"{real_minutes_until}min"] = prob
 
                         if temp_minutes is None:
                             has_rain = await self.hass.async_add_executor_job(check_forecast_rain, image_bytes,
                                                                               lat, lon, threshold_mmh, window_size, size_threshold, humidity, wind_speed_ms, wind_bearing_deg)
                             if has_rain:
                                 LOGGER.debug("Significant rain forecasted in %d minutes", minutes)
-                                temp_minutes = minutes
+                                temp_minutes = real_minutes_until
 
                     elif response.status == HTTPStatus.NOT_FOUND:
                         # Pokud chybí hned první snímek, nemá smysl zkoušet zbytek sady
