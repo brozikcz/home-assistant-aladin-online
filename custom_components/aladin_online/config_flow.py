@@ -18,6 +18,7 @@ from .const import (
 	CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
 	CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
 	CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY,
+	CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE,
 )
 from .errors import LocationUnavailable, ServiceUnavailable
 from typing import Any, Dict
@@ -34,6 +35,7 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 					CONF_LATITUDE: user_input[CONF_LATITUDE],
 					CONF_LONGITUDE: user_input[CONF_LONGITUDE],
 					CONF_WEATHER_ENTITY: user_input.get(CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY),
+					CONF_USE_3D_WIND_PROFILE: user_input.get(CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE),
 				}
 				await self.async_set_unique_id(user_input[CONF_NAME])
 				self._abort_if_unique_id_configured()
@@ -63,6 +65,10 @@ class AladinOnlineConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 				): selector.EntitySelector(
 					selector.EntitySelectorConfig(domain="weather")
 				),
+				vol.Optional(
+					CONF_USE_3D_WIND_PROFILE,
+					default=self.config_entry.options.get(CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE) if hasattr(self, 'config_entry') else DEFAULT_USE_3D_WIND_PROFILE,
+				): bool,
 			}),
 			errors=errors,
 		)
@@ -199,5 +205,9 @@ class AladinOnlineOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 				): selector.EntitySelector(
 					selector.EntitySelectorConfig(domain="weather")
 				),
+				vol.Optional(
+					CONF_USE_3D_WIND_PROFILE,
+					default=self.config_entry.options.get(CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE),
+				): bool,
 			}),
 		)
