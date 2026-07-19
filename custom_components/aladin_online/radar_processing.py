@@ -153,6 +153,7 @@ def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat:
 
         # Omezení vrstvy na fyzikální realitu (Radar v 2000m, Terén ve 293m)
         layer_top = min(top_layer["height_m"], 2000.0)
+        # TODO from HA, user config flow or use open meteo `elevation` field!!
         layer_bottom = max(bottom_layer["height_m"], 293.0)
 
         if layer_top <= layer_bottom:
@@ -244,25 +245,6 @@ def get_dynamic_drift_pixel(lat: float, lon: float, width: int, height: int, pix
     lat_off_2, lon_off_2 = calculate_wind_drift_offset_1d(wind_speed_ms, wind_bearing_deg, real_fall_time, lat)
 
     return gps_to_pixel(lat - lat_off_2, lon - lon_off_2, width, height), lat_off_2, lon_off_2, 100.0
-
-
-def is_precipitation_pixel(pixel: tuple[int, ...]) -> bool:
-    """Determine if a pixel represents active precipitation based on alpha and color thresholds."""
-    if len(pixel) == 4:
-        r, g, b, alpha = pixel
-        return alpha > 0 and (r > 0 or g > 0 or b > 0)
-    return any(c > 0 for c in pixel[:3])
-
-
-def is_significant_rain(pixel: tuple[int, ...], threshold_mmh: float = 0.5) -> bool:
-    """Check if a pixel represents precipitation stronger than a defined threshold."""
-    if not is_precipitation_pixel(pixel):
-        return False
-
-    dbz = get_dbz(*pixel)
-    intensity = DBZ_TO_MMH.get(dbz, 0.0)
-    return intensity >= threshold_mmh
-
 
 def evaluate_pixel_cloud(px: int, py: int, width: int, height: int, pixels: Any, window_size: int, threshold_mmh: float,
                          humidity: float | None = None) -> tuple[int, float]:
