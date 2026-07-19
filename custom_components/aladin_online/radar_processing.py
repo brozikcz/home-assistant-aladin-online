@@ -62,18 +62,23 @@ def get_terminal_velocity(intensity_mmh: float) -> float:
 
 def calculate_dynamic_threshold(base_threshold_mmh: float, humidity: float | None) -> float:
     """Calculate dynamic threshold based on humidity (virga compensation).
-
-    If humidity is None, return base threshold (pure radar mode).
+    Uses continuous linear interpolation to prevent value flapping.
     """
     if humidity is None:
         return base_threshold_mmh
 
-    if humidity < 50.0:
+    if humidity <= 50.0:
+        # Vlhkost <= 50%: Práh je 4x vyšší (silné odpařování)
         multiplier = 4.0
     elif humidity <= 85.0:
-        # linear-ish scaling between 2.0 and ~1.0 as humidity goes 50->85
-        multiplier = 2.0 + (85.0 - humidity) / 70.0
+        # Vlhkost 50% - 85%: Lineární pokles z 4.0 na 1.0
+        # (humidity - 50) / 35 dá hodnotu od 0.0 do 1.0
+        multiplier = 4.0 - ((humidity - 50.0) / 35.0) * 3.0
+    elif humidity <= 95.0:
+        # Vlhkost 85% - 95%: Lineární pokles z 1.0 na 0.5 (vzduch je nasycen, déšť snadno dopadne)
+        multiplier = 1.0 - ((humidity - 85.0) / 10.0) * 0.5
     else:
+        # Vlhkost > 95%: Práh je na polovině (detekce i slabého mrholení)
         multiplier = 0.5
 
     return base_threshold_mmh * multiplier
