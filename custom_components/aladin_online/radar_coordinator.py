@@ -26,6 +26,16 @@ from .open_meteo_client import get_3d_wind_profile
 from .radar_processing import get_radar_info, get_forecast_info, get_precipitation_details
 
 
+NOWCAST_SKILL_DECAY: dict[int, float] = {
+    10: 0.95,
+    20: 0.85,
+    30: 0.70,
+    40: 0.55,
+    50: 0.40,
+    60: 0.30,
+}
+
+
 @dataclass
 class AladinRadar:
     rain_now: bool
@@ -34,12 +44,13 @@ class AladinRadar:
     expected_rain_timestamp: datetime | None
     rain_probability: int
     rain_now_pixel_count: int
-    forecast_probabilities: dict[str, int]
+    forecast_coverages: dict[str, int]
     rain_duration_minutes: int
     exceeds_forecast_horizon: bool
     forecast_timeline: list[dict[str, Any]]
     precipitation_type: str | None = None
     freezing_level_m: float | None = None
+    nwp_precipitation_probability: int | None = None
 
 
 @dataclass
@@ -110,12 +121,15 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         wind_speed_ms: float = 0.0
         wind_bearing_deg: int = 0
         profile_data = None
+        nwp_precipitation_probability: int | None = None
 
         source_used = "pure_radar"
 
         if use_3d_wind_profile:
-            profile_data = await get_3d_wind_profile(session, lat, lon)
-            if profile_data:
+            wind_data = await get_3d_wind_profile(session, lat, lon)
+            if wind_data:
+                profile_data = wind_data["profile"]
+                nwp_precipitation_probability = wind_data.get("precipitation_probability")
                 source_used = "open_meteo_3d"
                 # Extrakce povrchové vrstvy (nejnižší geopotenciální výška) pouze pro vizuální log
                 surface = profile_data[-1]
@@ -230,7 +244,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 LOGGER.error("Error fetching current radar image: %s", ex)
 
         # 2. Stažení forecast snímků s fallbackem
-        forecast_probabilities: dict[str, int] = {}
+        forecast_coverages: dict[str, int] = {}
         forecast_rain_states: dict[int, bool] = {}
         forecast_target_utc_map: dict[int, datetime] = {}
         forecast_timeline: list[dict[str, Any]] = []
@@ -242,7 +256,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             base_time = base_time_dt.strftime("%H%M")
 
             batch_ready = True
-            temp_probabilities = {}
+            first_fetched = True
+            temp_coverages = {}
             temp_rain_states = {}
             temp_target_utc_map = {}
             temp_timeline = []
@@ -272,6 +287,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     response = await session.get(forecast_url)
 
                     if response.status == HTTPStatus.OK:
+                        first_fetched = False
                         image_bytes = await response.read()
 
                         # Fetch comprehensive forecast info in a single pass
@@ -291,34 +307,35 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             temp_c
                         )
 
-                        prob = forecast_info["probability_pct"]
+                        cov = forecast_info["coverage_pct"]
                         has_rain = forecast_info["rain"]
 
-                        temp_probabilities[forecast_target_utc.isoformat()] = prob
+                        temp_coverages[forecast_target_utc.isoformat()] = cov
                         temp_rain_states[real_minutes_until] = has_rain
                         temp_target_utc_map[real_minutes_until] = forecast_target_utc
 
                         temp_timeline.append({
                             "time": forecast_target_utc.isoformat(),
                             "rain": has_rain,
-                            "probability_pct": prob,
+                            "coverage_pct": cov,
                             "intensity_mmh": forecast_info["intensity_mmh"],
                             "cloud_size_px": forecast_info["cloud_size_px"]
                         })
 
                     elif response.status == HTTPStatus.NOT_FOUND:
-                        # If the first image is missing, there is no point in trying the rest of the batch
-                        if minutes == 10:
+                        # If the first fetched image in this batch is missing, the batch is not ready yet
+                        if first_fetched:
                             LOGGER.debug("Forecast batch %s not ready yet, falling back to older data.", base_time)
                             batch_ready = False
                             break  # Cancel the inner 10-60 loop and trigger the next offset iteration (-5 min)
+                        first_fetched = False
 
                 except Exception as ex:
                     LOGGER.debug("Error fetching forecast radar image for +%d min: %s", minutes, ex)
 
             # If we successfully processed the batch (at least the first image existed), save the data and end the fallback
-            if batch_ready and temp_probabilities:
-                forecast_probabilities = temp_probabilities
+            if batch_ready and temp_coverages:
+                forecast_coverages = temp_coverages
                 forecast_rain_states = temp_rain_states
                 forecast_target_utc_map = temp_target_utc_map
                 forecast_timeline = temp_timeline
@@ -361,10 +378,23 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     LOGGER.debug("Next rain expected at %s (in %d minutes)", expected_rain_timestamp.isoformat(), m)
                     break
 
-        # Include current rain (rain_now = 100% rain probability) in the total probability
-        current_rain_prob = 100 if radar_info["rain_now"] else 0
-        all_probabilities = list(forecast_probabilities.values()) + [current_rain_prob]
-        rain_probability = max(all_probabilities) if all_probabilities else 0
+        # Skill-decay radar probability:
+        # Bereme maximální (coverage × skill_factor) přes celou timeline.
+        # Pokud právě prší (rain_now), pravděpodobnost je 100%.
+        if radar_info["rain_now"]:
+            rain_probability = 100
+        elif forecast_timeline:
+            max_adjusted = 0.0
+            for step in forecast_timeline:
+                seconds = (datetime.fromisoformat(step["time"]) - now.replace(tzinfo=timezone.utc)).total_seconds()
+                lead_min = max(10, min(60, int(round(seconds / 600.0) * 10)))
+                skill = NOWCAST_SKILL_DECAY.get(lead_min, 0.30)
+                adjusted = (step["coverage_pct"] / 100.0) * skill
+                if adjusted > max_adjusted:
+                    max_adjusted = adjusted
+            rain_probability = round(max_adjusted * 100)
+        else:
+            rain_probability = 0
 
         precip_type, freezing_level = get_precipitation_details(profile_data)
 
@@ -377,11 +407,12 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 expected_rain_timestamp=expected_rain_timestamp,
                 rain_probability=rain_probability,
                 rain_now_pixel_count=radar_info["rain_now_pixel_count"],
-                forecast_probabilities=forecast_probabilities,
+                forecast_coverages=forecast_coverages,
                 rain_duration_minutes=rain_duration_minutes,
                 exceeds_forecast_horizon=exceeds_forecast_horizon,
                 forecast_timeline=forecast_timeline,
                 precipitation_type=precip_type,
                 freezing_level_m=freezing_level,
+                nwp_precipitation_probability=nwp_precipitation_probability,
             )
         )

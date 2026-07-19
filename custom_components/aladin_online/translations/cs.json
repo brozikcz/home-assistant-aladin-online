@@ -79,6 +79,9 @@
 			},
 			"freezing_level_m": {
 				"name": "Nulová izoterma"
+			},
+			"nwp_precipitation_probability": {
+				"name": "Pravděpodobnost srážek (NWP model)"
 			}
 		}
 	}

@@ -53,6 +53,7 @@ class SensorType(StrEnum):
 	RADAR_RAIN_DURATION = "radar_rain_duration"
 	RADAR_PRECIPITATION_TYPE = "precipitation_type"
 	RADAR_FREEZING_LEVEL = "freezing_level_m"
+	RADAR_NWP_PRECIPITATION_PROBABILITY = "nwp_precipitation_probability"
 
 @dataclass(frozen=True, kw_only=True)
 class SensorEntityDescription(ComponentSensorEntityDescription):
@@ -127,6 +128,15 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		suggested_display_precision=0,
 		state_class=SensorStateClass.MEASUREMENT,
 		value_func=lambda data: data.freezing_level_m,
+	),
+	SensorType.RADAR_NWP_PRECIPITATION_PROBABILITY: SensorEntityDescription(
+		key=SensorType.RADAR_NWP_PRECIPITATION_PROBABILITY,
+		name="NWP precipitation probability",
+		icon="mdi:cloud-percent-outline",
+		native_unit_of_measurement=PERCENTAGE,
+		suggested_display_precision=0,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.nwp_precipitation_probability,
 	),
 }
 
@@ -294,9 +304,12 @@ class RadarSensorEntity(CoordinatorEntity, ComponentSensorEntity):
 		self._attr_native_value = self.entity_description.value_func(self.coordinator.data.radar)
 
 		if self.entity_description.key == SensorType.RADAR_RAIN_PROBABILITY:
+			coverages = self.coordinator.data.radar.forecast_coverages
+			max_coverage = max(coverages.values()) if coverages else 0
 			self._attr_extra_state_attributes = {
-				"forecast_probabilities": self.coordinator.data.radar.forecast_probabilities,
-				"timeline": self.coordinator.data.radar.forecast_timeline
+				"forecast_coverages": coverages,
+				"max_coverage_pct": max_coverage,
+				"timeline": self.coordinator.data.radar.forecast_timeline,
 			}
 		elif self.entity_description.key == SensorType.RADAR_RAIN_DURATION:
 			self._attr_extra_state_attributes = {

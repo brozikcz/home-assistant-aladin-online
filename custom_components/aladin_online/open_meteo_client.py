@@ -13,7 +13,7 @@ _OPEN_METEO_CACHE = {"timestamp": 0.0, "data": None}
 CACHE_TTL_SECONDS = 900
 
 
-async def get_3d_wind_profile(session: aiohttp.ClientSession, lat: float, lon: float) -> list[dict[str, Any]] | None:
+async def get_3d_wind_profile(session: aiohttp.ClientSession, lat: float, lon: float) -> dict[str, Any] | None:
     """Fetch 3D wind and humidity profile from Open-Meteo with 15-minute caching."""
     global _OPEN_METEO_CACHE
 
@@ -28,7 +28,7 @@ async def get_3d_wind_profile(session: aiohttp.ClientSession, lat: float, lon: f
     LOGGER.debug("Open-Meteo: Cache expired or empty. Downloading fresh 3D profile data for lat=%s, lon=%s...", lat, lon)
     url = (
         f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-        "&hourly=temperature_800hPa,temperature_850hPa,temperature_900hPa,temperature_925hPa,temperature_950hPa,temperature_975hPa,"
+        "&hourly=precipitation_probability,temperature_800hPa,temperature_850hPa,temperature_900hPa,temperature_925hPa,temperature_950hPa,temperature_975hPa,"
         "relative_humidity_800hPa,relative_humidity_850hPa,relative_humidity_900hPa,relative_humidity_925hPa,relative_humidity_950hPa,relative_humidity_975hPa,"
         "wind_speed_800hPa,wind_speed_850hPa,wind_speed_900hPa,wind_speed_925hPa,wind_speed_950hPa,wind_speed_975hPa,"
         "wind_direction_800hPa,wind_direction_850hPa,wind_direction_900hPa,wind_direction_925hPa,wind_direction_950hPa,wind_direction_975hPa,"
@@ -52,8 +52,8 @@ async def get_3d_wind_profile(session: aiohttp.ClientSession, lat: float, lon: f
         return None
 
 
-def extract_current_hour_profile(data: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Parses API response and returns a list of layers for the current UTC hour."""
+def extract_current_hour_profile(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Parses API response and returns profile layers + NWP probability for the current UTC hour."""
     try:
         hourly = data["hourly"]
         times = hourly["time"]
@@ -79,7 +79,13 @@ def extract_current_hour_profile(data: dict[str, Any]) -> list[dict[str, Any]] |
                 }
             )
 
-        return sorted(profile, key=lambda x: x["height_m"], reverse=True)
+        precip_prob_key = "precipitation_probability"
+        nwp_precip_probability = hourly.get(precip_prob_key, [None] * len(times))[idx] if precip_prob_key in hourly else None
+
+        return {
+            "profile": sorted(profile, key=lambda x: x["height_m"], reverse=True),
+            "precipitation_probability": nwp_precip_probability,
+        }
     except KeyError as ex:
         LOGGER.error("Malformed Open-Meteo data: missing %s", ex)
         return None

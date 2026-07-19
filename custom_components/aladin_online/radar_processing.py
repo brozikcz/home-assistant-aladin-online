@@ -506,7 +506,7 @@ dict[str, Any]:
         if not pixel_coords:
             return {
                 "rain": False,
-                "probability_pct": 0,
+                "coverage_pct": 0,
                 "intensity_mmh": 0.0,
                 "cloud_size_px": 0
             }
@@ -520,7 +520,7 @@ dict[str, Any]:
 
         return {
             "rain": rain_pixels >= size_threshold,
-            "probability_pct": int((rain_pixels / (window_size * window_size)) * 100),
+            "coverage_pct": int((rain_pixels / (window_size * window_size)) * 100),
             "intensity_mmh": max_intensity if rain_pixels >= size_threshold else 0.0,
             "cloud_size_px": rain_pixels
         }

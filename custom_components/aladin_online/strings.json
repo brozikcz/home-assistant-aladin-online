@@ -80,6 +80,9 @@
 			},
 			"freezing_level_m": {
 				"name": "Freezing level"
+			},
+			"nwp_precipitation_probability": {
+				"name": "NWP precipitation probability"
 			}
 		}
 	}
