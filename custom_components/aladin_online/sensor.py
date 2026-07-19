@@ -21,6 +21,7 @@ from homeassistant.const import (
 	UnitOfPressure,
 	UnitOfSpeed,
 	UnitOfTemperature,
+	UnitOfTime,
 	UnitOfVolumetricFlux, )
 from homeassistant.core import callback, HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType
@@ -49,6 +50,7 @@ class SensorType(StrEnum):
 	RADAR_RAIN_INTENSITY = "radar_rain_intensity"
 	RADAR_RAIN_PROBABILITY = "radar_rain_probability"
 	RADAR_RAIN_NOW_PIXEL_COUNT = "radar_rain_now_pixel_count"
+	RADAR_RAIN_DURATION = "radar_rain_duration"
 
 @dataclass(frozen=True, kw_only=True)
 class SensorEntityDescription(ComponentSensorEntityDescription):
@@ -62,7 +64,7 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		native_unit_of_measurement=UnitOfLength.KILOMETERS,
 		suggested_display_precision=1,
 		state_class=SensorStateClass.MEASUREMENT,
-		value_func=lambda data: data.nearest_distance,
+		value_func=lambda data: None if data.rain_now else data.nearest_distance,
 	),
 	SensorType.RADAR_EXPECTED_RAIN_TIMESTAMP: SensorEntityDescription(
 		key=SensorType.RADAR_EXPECTED_RAIN_TIMESTAMP,
@@ -96,6 +98,15 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		suggested_display_precision=0,
 		state_class=SensorStateClass.MEASUREMENT,
 		value_func=lambda data: data.rain_now_pixel_count,
+	),
+	SensorType.RADAR_RAIN_DURATION: SensorEntityDescription(
+		key=SensorType.RADAR_RAIN_DURATION,
+		name="Radar rain duration",
+		icon="mdi:timer-sand",
+		device_class=SensorDeviceClass.DURATION,
+		native_unit_of_measurement=UnitOfTime.MINUTES,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.rain_duration_minutes,
 	),
 }
 
@@ -264,6 +275,10 @@ class RadarSensorEntity(CoordinatorEntity, ComponentSensorEntity):
 
 		if self.entity_description.key == SensorType.RADAR_RAIN_PROBABILITY:
 			self._attr_extra_state_attributes = self.coordinator.data.radar.forecast_probabilities
+		elif self.entity_description.key == SensorType.RADAR_RAIN_DURATION:
+			self._attr_extra_state_attributes = {
+				"exceeds_forecast_horizon": self.coordinator.data.radar.exceeds_forecast_horizon
+			}
 
 	@callback
 	def _handle_coordinator_update(self) -> None:

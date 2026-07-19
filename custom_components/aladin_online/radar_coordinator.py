@@ -35,6 +35,8 @@ class AladinRadar:
     rain_probability: int
     rain_now_pixel_count: int
     forecast_probabilities: dict[str, int]
+    rain_duration_minutes: int
+    exceeds_forecast_horizon: bool
 
 
 @dataclass
@@ -210,8 +212,9 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 LOGGER.error("Error fetching current radar image: %s", ex)
 
         # 2. Stažení forecast snímků s fallbackem
-        expected_rain_timestamp = None
         forecast_probabilities: dict[str, int] = {}
+        forecast_rain_states: dict[int, bool] = {}
+        forecast_target_utc_map: dict[int, datetime] = {}
 
         # Nowcasting model se počítá déle než samotný snímek, zkusíme aktuální, případně až 10 minut starý base
         for offset in (0, 5, 10):
@@ -221,7 +224,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
             batch_ready = True
             temp_probabilities = {}
-            temp_rain_timestamp = None
+            temp_rain_states = {}
+            temp_target_utc_map = {}
 
             for minutes in range(10, 70, 10):
                 forecast_target = base_time_dt + timedelta(minutes=minutes)
@@ -249,7 +253,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     if response.status == HTTPStatus.OK:
                         image_bytes = await response.read()
 
-                        # Výpočet pravděpodobnosti a uložení pod přesným ISO časem snímku
+                        # Calculate probability and save under exact ISO time
                         prob = await self.hass.async_add_executor_job(
                             calculate_forecast_probability,
                             image_bytes,
@@ -264,42 +268,77 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                         )
                         temp_probabilities[forecast_target_utc.isoformat()] = prob
 
-                        if temp_rain_timestamp is None:
-                            has_rain = await self.hass.async_add_executor_job(
-                                check_forecast_rain,
-                                image_bytes,
-                                lat,
-                                lon,
-                                threshold_mmh,
-                                window_size,
-                                size_threshold,
-                                humidity,
-                                wind_speed_ms,
-                                wind_bearing_deg,
-                                profile_data,
-                            )
-                            if has_rain:
-                                LOGGER.debug("Significant rain forecasted at %s (in %d minutes)",
-                                             forecast_target_utc.isoformat(), real_minutes_until)
-                                temp_rain_timestamp = forecast_target_utc
+                        has_rain = await self.hass.async_add_executor_job(
+                            check_forecast_rain,
+                            image_bytes,
+                            lat,
+                            lon,
+                            threshold_mmh,
+                            window_size,
+                            size_threshold,
+                            humidity,
+                            wind_speed_ms,
+                            wind_bearing_deg,
+                            profile_data,
+                        )
+                        temp_rain_states[real_minutes_until] = has_rain
+                        temp_target_utc_map[real_minutes_until] = forecast_target_utc
 
                     elif response.status == HTTPStatus.NOT_FOUND:
-                        # Pokud chybí hned první snímek, nemá smysl zkoušet zbytek sady
+                        # If the first image is missing, there is no point in trying the rest of the batch
                         if minutes == 10:
                             LOGGER.debug("Forecast batch %s not ready yet, falling back to older data.", base_time)
                             batch_ready = False
-                            break  # Zruší vnitřní smyčku 10-60 a vyvolá další iteraci offsetu (-5 min)
+                            break  # Cancel the inner 10-60 loop and trigger the next offset iteration (-5 min)
 
                 except Exception as ex:
                     LOGGER.debug("Error fetching forecast radar image for +%d min: %s", minutes, ex)
 
-            # Pokud jsme úspěšně prošli dávku (alespoň první snímek existoval), uložíme data a končíme fallback
+            # If we successfully processed the batch (at least the first image existed), save the data and end the fallback
             if batch_ready and temp_probabilities:
                 forecast_probabilities = temp_probabilities
-                expected_rain_timestamp = temp_rain_timestamp
+                forecast_rain_states = temp_rain_states
+                forecast_target_utc_map = temp_target_utc_map
                 break
 
-        # Zahrnutí aktuálního deště (rain_now = 100% pravděpodobnost srážek) do celkové pravděpodobnosti
+        # Calculate duration and expected timestamps based on collected states
+        rain_duration_minutes = 0
+        exceeds_forecast_horizon = False
+        expected_rain_timestamp = None
+
+        if radar_info["rain_now"]:
+            # Find when it stops
+            stopped_at_minute = None
+            for m in sorted(forecast_rain_states.keys()):
+                if not forecast_rain_states[m]:
+                    stopped_at_minute = m
+                    break
+
+            if stopped_at_minute is None:
+                # Never stopped in the available forecast data
+                rain_duration_minutes = max(forecast_rain_states.keys()) if forecast_rain_states else 0
+                exceeds_forecast_horizon = bool(forecast_rain_states)
+                if exceeds_forecast_horizon:
+                    LOGGER.debug("Rain is continuous beyond forecast horizon (>= %d min)", rain_duration_minutes)
+            else:
+                rain_duration_minutes = stopped_at_minute
+                LOGGER.debug("Rain expected to stop in %d minutes", rain_duration_minutes)
+
+                # Check if it starts again
+                for m in sorted(forecast_rain_states.keys()):
+                    if m > stopped_at_minute and forecast_rain_states[m]:
+                        expected_rain_timestamp = forecast_target_utc_map[m]
+                        LOGGER.debug("Next rain expected at %s (in %d minutes)", expected_rain_timestamp.isoformat(), m)
+                        break
+        else:
+            # Not raining now, find when it starts
+            for m in sorted(forecast_rain_states.keys()):
+                if forecast_rain_states[m]:
+                    expected_rain_timestamp = forecast_target_utc_map[m]
+                    LOGGER.debug("Next rain expected at %s (in %d minutes)", expected_rain_timestamp.isoformat(), m)
+                    break
+
+        # Include current rain (rain_now = 100% rain probability) in the total probability
         current_rain_prob = 100 if radar_info["rain_now"] else 0
         all_probabilities = list(forecast_probabilities.values()) + [current_rain_prob]
         rain_probability = max(all_probabilities) if all_probabilities else 0
@@ -314,5 +353,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 rain_probability=rain_probability,
                 rain_now_pixel_count=radar_info["rain_now_pixel_count"],
                 forecast_probabilities=forecast_probabilities,
+                rain_duration_minutes=rain_duration_minutes,
+                exceeds_forecast_horizon=exceeds_forecast_horizon,
             )
         )
