@@ -1,15 +1,11 @@
 from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from homeassistant.const import (
-	PERCENTAGE,
-	UnitOfLength,
-	UnitOfPressure,
-	UnitOfSpeed,
-	UnitOfTemperature,
-	UnitOfVolumetricFlux, UnitOfTime,
-)
+from types import MappingProxyType
+from typing import Dict
+
 from homeassistant.components.sensor import (
 	SensorDeviceClass,
 	SensorEntity as ComponentSensorEntity,
@@ -19,15 +15,19 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
 	CONF_NAME,
 )
+from homeassistant.const import (
+	PERCENTAGE,
+	UnitOfLength,
+	UnitOfPressure,
+	UnitOfSpeed,
+	UnitOfTemperature,
+	UnitOfVolumetricFlux, )
 from homeassistant.core import callback, HomeAssistant
+from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
-from homeassistant.helpers.device_registry import DeviceEntryType
-from types import MappingProxyType
-from typing import Dict
 from . import AladinOnlineConfigEntry
 from .aladin_online import AladinActualWeather
-from .radar_coordinator import AladinRadarCoordinator
 from .const import (
 	DOMAIN,
 	NAME,
@@ -45,7 +45,7 @@ class SensorType(StrEnum):
 	WIND_SPEED = "wind_speed"
 	WIND_GUST_SPEED = "wind_gust_speed"
 	RADAR_NEAREST_RAIN_DISTANCE = "radar_nearest_rain_distance"
-	RADAR_MINUTES_UNTIL_RAIN = "radar_minutes_until_rain"
+	RADAR_EXPECTED_RAIN_TIMESTAMP = "expected_rain_timestamp"
 	RADAR_RAIN_INTENSITY = "radar_rain_intensity"
 	RADAR_RAIN_PROBABILITY = "radar_rain_probability"
 	RADAR_RAIN_NOW_PIXEL_COUNT = "radar_rain_now_pixel_count"
@@ -64,14 +64,12 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		state_class=SensorStateClass.MEASUREMENT,
 		value_func=lambda data: data.nearest_distance,
 	),
-	SensorType.RADAR_MINUTES_UNTIL_RAIN: SensorEntityDescription(
-		key=SensorType.RADAR_MINUTES_UNTIL_RAIN,
-		name="Radar minutes until rain",
+	SensorType.RADAR_EXPECTED_RAIN_TIMESTAMP: SensorEntityDescription(
+		key=SensorType.RADAR_EXPECTED_RAIN_TIMESTAMP,
+		name="Radar expected rain timestamp",
 		icon="mdi:clock-outline",
-		native_unit_of_measurement=UnitOfTime.MINUTES,
-		suggested_display_precision=0,
-		state_class=SensorStateClass.MEASUREMENT,
-		value_func=lambda data: data.minutes_until_rain,
+		device_class=SensorDeviceClass.TIMESTAMP,
+		value_func=lambda data: data.expected_rain_timestamp,
 	),
 	SensorType.RADAR_RAIN_INTENSITY: SensorEntityDescription(
 		key=SensorType.RADAR_RAIN_INTENSITY,

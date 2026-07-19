@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any
 
@@ -31,7 +31,7 @@ class AladinRadar:
     rain_now: bool
     rain_now_value: float
     nearest_distance: float | None
-    minutes_until_rain: int | None
+    expected_rain_timestamp: datetime | None
     rain_probability: int
     rain_now_pixel_count: int
     forecast_probabilities: dict[str, int]
@@ -210,7 +210,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 LOGGER.error("Error fetching current radar image: %s", ex)
 
         # 2. Stažení forecast snímků s fallbackem
-        minutes_until_rain = None
+        expected_rain_timestamp = None
         forecast_probabilities: dict[str, int] = {}
 
         # Nowcasting model se počítá déle než samotný snímek, zkusíme aktuální, případně až 10 minut starý base
@@ -221,7 +221,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
             batch_ready = True
             temp_probabilities = {}
-            temp_minutes = None
+            temp_rain_timestamp = None
 
             for minutes in range(10, 70, 10):
                 forecast_target = base_time_dt + timedelta(minutes=minutes)
@@ -232,6 +232,9 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
                 tgt_date = forecast_target.strftime("%Y%m%d")
                 tgt_time = forecast_target.strftime("%H%M")
+
+                # Sjednocená proměnná pro ukládání přesného času snímku do dictionary a senzoru
+                forecast_target_utc = forecast_target.replace(tzinfo=timezone.utc)
 
                 if image_type == RADAR_IMAGE_TYPE_CAPPI:
                     forecast_url = f"https://intranet.chmi.cz/files/portal/docs/meteo/rad/inca-cz/data/czrad-z_cappi020_fct/{base_date}.{base_time}/pacz2gmaps3.fct_z_cappi020.{tgt_date}.{tgt_time}.{minutes}.png"
@@ -246,7 +249,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     if response.status == HTTPStatus.OK:
                         image_bytes = await response.read()
 
-                        # Sjednocení parametrů citlivosti pro výpočet pravděpodobnosti
+                        # Výpočet pravděpodobnosti a uložení pod přesným ISO časem snímku
                         prob = await self.hass.async_add_executor_job(
                             calculate_forecast_probability,
                             image_bytes,
@@ -259,9 +262,9 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             wind_bearing_deg,
                             profile_data,
                         )
-                        temp_probabilities[f"{real_minutes_until}min"] = prob
+                        temp_probabilities[forecast_target_utc.isoformat()] = prob
 
-                        if temp_minutes is None:
+                        if temp_rain_timestamp is None:
                             has_rain = await self.hass.async_add_executor_job(
                                 check_forecast_rain,
                                 image_bytes,
@@ -276,14 +279,14 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                                 profile_data,
                             )
                             if has_rain:
-                                LOGGER.debug("Significant rain forecasted in %d minutes", minutes)
-                                temp_minutes = real_minutes_until
+                                LOGGER.debug("Significant rain forecasted at %s (in %d minutes)",
+                                             forecast_target_utc.isoformat(), real_minutes_until)
+                                temp_rain_timestamp = forecast_target_utc
 
                     elif response.status == HTTPStatus.NOT_FOUND:
                         # Pokud chybí hned první snímek, nemá smysl zkoušet zbytek sady
                         if minutes == 10:
-                            LOGGER.debug("Forecast batch %s not ready yet, falling back to older data.",
-                                         base_time)
+                            LOGGER.debug("Forecast batch %s not ready yet, falling back to older data.", base_time)
                             batch_ready = False
                             break  # Zruší vnitřní smyčku 10-60 a vyvolá další iteraci offsetu (-5 min)
 
@@ -293,7 +296,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             # Pokud jsme úspěšně prošli dávku (alespoň první snímek existoval), uložíme data a končíme fallback
             if batch_ready and temp_probabilities:
                 forecast_probabilities = temp_probabilities
-                minutes_until_rain = temp_minutes
+                expected_rain_timestamp = temp_rain_timestamp
                 break
 
         # Zahrnutí aktuálního deště (rain_now = 100% pravděpodobnost srážek) do celkové pravděpodobnosti
@@ -307,7 +310,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 rain_now=radar_info["rain_now"],
                 rain_now_value=radar_info["rain_now_value"],
                 nearest_distance=radar_info["nearest_distance"],
-                minutes_until_rain=minutes_until_rain,
+                expected_rain_timestamp=expected_rain_timestamp,
                 rain_probability=rain_probability,
                 rain_now_pixel_count=radar_info["rain_now_pixel_count"],
                 forecast_probabilities=forecast_probabilities,
