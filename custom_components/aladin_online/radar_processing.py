@@ -1,9 +1,13 @@
 from __future__ import annotations
-import math
+
 import io
 import logging
 from typing import Any, Final
+
+import math
 from PIL import Image
+
+from .const import DEFAULT_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +40,6 @@ DBZ_TO_MMH: Final = {
 }
 
 EARTH_RADIUS_KM: Final = 6371.0
-PSEUDOCAPPI_ALTITUDE_M: Final = 2000.0
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -63,25 +66,35 @@ def get_terminal_velocity(intensity_mmh: float) -> float:
     return 9.0
 
 
-def calculate_dynamic_threshold(base_threshold_mmh: float, humidity: float | None) -> float:
-    """Calculate dynamic threshold based on humidity (virga compensation).
-    Uses continuous linear interpolation to prevent value flapping.
-    """
-    if humidity is None:
+def wet_bulb_temperature(temp_c: float, rh_pct: float) -> float:
+    """Stull (2011) empirical formula, accuracy ±0.3°C."""
+    tw = temp_c * math.atan(0.151977 * math.sqrt(rh_pct + 8.313659))
+    tw += math.atan(temp_c + rh_pct) - math.atan(rh_pct - 1.676331)
+    tw += 0.00391838 * rh_pct ** 1.5 * math.atan(0.023101 * rh_pct)
+    tw -= 4.686035
+    return tw
+
+
+def calculate_dynamic_threshold(base_threshold_mmh: float, humidity: float | None,
+                                temp_c: float | None = None) -> float:
+    """Calculate dynamic threshold based on wet-bulb depression (virga compensation)."""
+    if humidity is None or temp_c is None:
         return base_threshold_mmh
 
-    if humidity <= 50.0:
-        # Vlhkost <= 50%: Práh je 4x vyšší (silné odpařování)
+    tw = wet_bulb_temperature(temp_c, humidity)
+    depression = temp_c - tw  # Rozdíl mezi suchou a mokrou teplotou
+
+    # Depression určuje potenciál odpařování (čím vyšší, tím sušší vzduch a silnější virga)
+    if depression >= 8.0:
         multiplier = 4.0
-    elif humidity <= 85.0:
-        # Vlhkost 50% - 85%: Lineární pokles z 4.0 na 1.0
-        # (humidity - 50) / 35 dá hodnotu od 0.0 do 1.0
-        multiplier = 4.0 - ((humidity - 50.0) / 35.0) * 3.0
-    elif humidity <= 95.0:
-        # Vlhkost 85% - 95%: Lineární pokles z 1.0 na 0.5 (vzduch je nasycen, déšť snadno dopadne)
-        multiplier = 1.0 - ((humidity - 85.0) / 10.0) * 0.5
+    elif depression >= 3.0:
+        # Lineární klesání z 4.0 na 1.0 v rozsahu depression 8.0 -> 3.0
+        multiplier = 1.0 + ((depression - 3.0) / 5.0) * 3.0
+    elif depression >= 1.0:
+        # Lineární přechod z 1.0 na 0.5 v rozsahu depression 3.0 -> 1.0
+        multiplier = 0.5 + ((depression - 1.0) / 2.0) * 0.5
     else:
-        # Vlhkost > 95%: Práh je na polovině (detekce i slabého mrholení)
+        # Téměř nasycený vzduch, minimální odpařování
         multiplier = 0.5
 
     return base_threshold_mmh * multiplier
@@ -136,29 +149,30 @@ def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, 
     return None
 
 
-def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat: float) -> tuple[float, float, float]:
+def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat: float, effective_altitude: float) -> \
+tuple[float, float, float, float]:
     """
     Simulates a drop falling through multiple atmospheric layers.
-    Returns: lat_offset_deg, lon_offset_deg, lowest_layer_humidity
+    Returns: lat_offset_deg, lon_offset_deg, lowest_layer_humidity, lowest_layer_temp_c
     """
     if not profile_data:
-        return 0.0, 0.0, 100.0
+        return 0.0, 0.0, 100.0, 10.0
 
     v_term = get_terminal_velocity(intensity_mmh)
 
     total_lat_offset_m = 0.0
     total_lon_offset_m = 0.0
 
-    # Použijeme vlhkost z nejnižší dostupné vrstvy pro efektivnější detekci virgy
+    # Použijeme data z nejnižší dostupné vrstvy pro efektivnější detekci virgy
     final_humidity = profile_data[-1]["humidity_pct"]
+    final_temp_c = profile_data[-1].get("temp_c", 10.0)
 
     for i in range(len(profile_data) - 1):
         top_layer = profile_data[i]
         bottom_layer = profile_data[i + 1]
 
-        # Omezení vrstvy na fyzikální realitu (Radar v 2000m, Terén ve 293m)
-        layer_top = min(top_layer["height_m"], 2000.0)
-        # TODO from HA, user config flow or use open meteo `elevation` field!!
+        # Omezení vrstvy na efektivní výšku radaru a terén (TODO from HA/Open-Meteo elevation)
+        layer_top = min(top_layer["height_m"], effective_altitude)
         layer_bottom = max(bottom_layer["height_m"], 293.0)
 
         if layer_top <= layer_bottom:
@@ -182,7 +196,7 @@ def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat:
     lat_offset_deg = total_lat_offset_m / 111111.0
     lon_offset_deg = total_lon_offset_m / (111111.0 * math.cos(math.radians(lat)))
 
-    return lat_offset_deg, lon_offset_deg, final_humidity
+    return lat_offset_deg, lon_offset_deg, final_humidity, final_temp_c
 
 
 def get_dbz(r: int, g: int, b: int, a: int = 255) -> int:
@@ -212,50 +226,55 @@ def get_dbz(r: int, g: int, b: int, a: int = 255) -> int:
 
 
 def get_dynamic_drift_pixel(lat: float, lon: float, width: int, height: int, pixels: Any, wind_speed_ms: float,
-                            wind_bearing_deg: int, profile_data: list[dict] | None = None) -> tuple[
-    tuple[int, int] | None, float, float, float]:
+                            wind_bearing_deg: int, profile_data: list[dict] | None = None,
+                            image_type: str = DEFAULT_RADAR_IMAGE_TYPE, temp_c: float | None = None) -> tuple[
+    tuple[int, int] | None, float, float, float, float | None]:
     """
     Applies a 2-step wind drift calculation (Reverse Tracking) and returns the target pixel + applied lat/lon offsets.
     """
+    effective_altitude = 5000.0 if image_type == RADAR_IMAGE_TYPE_MAX3D else 2000.0
+
     if profile_data:
-        lat_off_1, lon_off_1, _ = calculate_3d_wind_drift(profile_data, 0.0, lat)
+        lat_off_1, lon_off_1, _, _ = calculate_3d_wind_drift(profile_data, 0.0, lat, effective_altitude)
         px1_coords = gps_to_pixel(lat - lat_off_1, lon - lon_off_1, width, height)
 
         if not px1_coords:
-            return None, 0.0, 0.0, 100.0
+            return None, 0.0, 0.0, 100.0, None
 
         px1_x, px1_y = px1_coords
         dbz = get_dbz(*pixels[px1_x, px1_y])
         intensity_mmh = DBZ_TO_MMH.get(dbz, 0.0)
 
-        lat_off_2, lon_off_2, final_humidity = calculate_3d_wind_drift(profile_data, intensity_mmh, lat)
-        return gps_to_pixel(lat - lat_off_2, lon - lon_off_2, width, height), lat_off_2, lon_off_2, final_humidity
+        lat_off_2, lon_off_2, final_humidity, final_temp_c = calculate_3d_wind_drift(profile_data, intensity_mmh, lat,
+                                                                                     effective_altitude)
+        return gps_to_pixel(lat - lat_off_2, lon - lon_off_2, width,
+                            height), lat_off_2, lon_off_2, final_humidity, final_temp_c
 
     if wind_speed_ms < 0.1:
-        return gps_to_pixel(lat, lon, width, height), 0.0, 0.0, 100.0
+        return gps_to_pixel(lat, lon, width, height), 0.0, 0.0, 100.0, temp_c
 
-    initial_fall_time = PSEUDOCAPPI_ALTITUDE_M / 6.0
+    initial_fall_time = effective_altitude / 6.0
     lat_off_1, lon_off_1 = calculate_wind_drift_offset_1d(wind_speed_ms, wind_bearing_deg, initial_fall_time, lat)
     px1_coords = gps_to_pixel(lat - lat_off_1, lon - lon_off_1, width, height)
 
     if not px1_coords:
-        return None, 0.0, 0.0, 100.0
+        return None, 0.0, 0.0, 100.0, temp_c
 
     px1_x, px1_y = px1_coords
     dbz = get_dbz(*pixels[px1_x, px1_y])
     intensity_mmh = DBZ_TO_MMH.get(dbz, 0.0)
 
-    real_fall_time = (PSEUDOCAPPI_ALTITUDE_M / get_terminal_velocity(
+    real_fall_time = (effective_altitude / get_terminal_velocity(
         intensity_mmh)) if intensity_mmh > 0.0 else initial_fall_time
     lat_off_2, lon_off_2 = calculate_wind_drift_offset_1d(wind_speed_ms, wind_bearing_deg, real_fall_time, lat)
 
-    return gps_to_pixel(lat - lat_off_2, lon - lon_off_2, width, height), lat_off_2, lon_off_2, 100.0
+    return gps_to_pixel(lat - lat_off_2, lon - lon_off_2, width, height), lat_off_2, lon_off_2, 100.0, temp_c
 
 
 def evaluate_pixel_cloud(px: int, py: int, width: int, height: int, pixels: Any, window_size: int, threshold_mmh: float,
-                         humidity: float | None = None) -> tuple[int, float]:
+                         humidity: float | None = None, temp_c: float | None = None) -> tuple[int, float]:
     """Scans the window_size matrix around px, py and returns (matching_pixel_count, max_intensity)."""
-    dynamic_threshold = calculate_dynamic_threshold(threshold_mmh, humidity)
+    dynamic_threshold = calculate_dynamic_threshold(threshold_mmh, humidity, temp_c)
     half = window_size // 2
     matching_pixel_count = 0
     max_intensity = 0.0
@@ -365,16 +384,16 @@ def save_debug_image(img: Image.Image, original_lat: float, original_lon: float,
 
 def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60, threshold_mmh: float = 0.5,
                    window_size: int = 3, size_threshold: int = 2, humidity: float | None = None,
-                   wind_speed_ms: float = 0.0, wind_bearing_deg: int = 0, profile_data: list[dict] | None = None) -> \
-        dict[str, Any]:
+                   wind_speed_ms: float = 0.0, wind_bearing_deg: int = 0, profile_data: list[dict] | None = None,
+                   image_type: str = DEFAULT_RADAR_IMAGE_TYPE, temp_c: float | None = None) -> dict[str, Any]:
     """Process the current radar image to find immediate rain data and scan for the nearest precipitation."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
         width, height = img.size
         pixels = img.load()
 
-        pixel_coords, lat_offset, lon_offset, final_humidity = get_dynamic_drift_pixel(
-            lat, lon, width, height, pixels, wind_speed_ms, wind_bearing_deg, profile_data
+        pixel_coords, lat_offset, lon_offset, final_humidity, final_temp_c = get_dynamic_drift_pixel(
+            lat, lon, width, height, pixels, wind_speed_ms, wind_bearing_deg, profile_data, image_type, temp_c
         )
 
         if not pixel_coords:
@@ -397,8 +416,10 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
                          pixel_shift, wind_speed_ms, wind_bearing_deg)
 
         effective_humidity = final_humidity if profile_data else humidity
+        effective_temp = final_temp_c if profile_data else temp_c
+
         rain_now_pixel_count, rain_now_value = evaluate_pixel_cloud(px, py, width, height, pixels, window_size,
-                                                                    threshold_mmh, effective_humidity)
+                                                                    threshold_mmh, effective_humidity, effective_temp)
         rain_now = (rain_now_pixel_count >= size_threshold)
         if not rain_now:
             rain_now_value = 0.0
@@ -420,7 +441,7 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
                                 continue
 
                             count, _ = evaluate_pixel_cloud(nx, ny, width, height, pixels, window_size, threshold_mmh,
-                                                            effective_humidity)
+                                                            effective_humidity, effective_temp)
                             if count >= size_threshold:
                                 d = math.sqrt(dx * dx + dy * dy)
                                 if d < best_dist_px:
@@ -437,7 +458,7 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
                                     continue
 
                                 count, _ = evaluate_pixel_cloud(nx, ny, width, height, pixels, window_size,
-                                                                threshold_mmh, effective_humidity)
+                                                                threshold_mmh, effective_humidity, effective_temp)
                                 if count >= size_threshold:
                                     d = math.sqrt(dx * dx + dy * dy)
                                     if d < best_dist_px:
@@ -470,15 +491,16 @@ def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60,
 def get_forecast_info(image_bytes: bytes, lat: float, lon: float, window_size: int = 3,
                       threshold_mmh: float = 0.5, size_threshold: int = 2, humidity: float | None = None,
                       wind_speed_ms: float = 0.0, wind_bearing_deg: int = 0,
-                      profile_data: list[dict] | None = None) -> dict[str, Any]:
+                      profile_data: list[dict] | None = None, image_type: str = DEFAULT_RADAR_IMAGE_TYPE, temp_c: float | None = None) -> \
+dict[str, Any]:
     """Calculate comprehensive forecast info (probability, rain state, intensity, cloud size)."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
         width, height = img.size
         pixels = img.load()
 
-        pixel_coords, _, _, final_humidity = get_dynamic_drift_pixel(
-            lat, lon, width, height, pixels, wind_speed_ms, wind_bearing_deg, profile_data
+        pixel_coords, _, _, final_humidity, final_temp_c = get_dynamic_drift_pixel(
+            lat, lon, width, height, pixels, wind_speed_ms, wind_bearing_deg, profile_data, image_type, temp_c
         )
 
         if not pixel_coords:
@@ -491,9 +513,10 @@ def get_forecast_info(image_bytes: bytes, lat: float, lon: float, window_size: i
 
         px, py = pixel_coords
         effective_humidity = final_humidity if profile_data else humidity
+        effective_temp = final_temp_c if profile_data else temp_c
 
         rain_pixels, max_intensity = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh,
-                                                          effective_humidity)
+                                                          effective_humidity, effective_temp)
 
         return {
             "rain": rain_pixels >= size_threshold,

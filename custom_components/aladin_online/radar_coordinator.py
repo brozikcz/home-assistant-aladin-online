@@ -18,7 +18,7 @@ from .const import (
     CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH,
     CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE,
     CONF_RADAR_SIZE_THRESHOLD, DEFAULT_RADAR_SIZE_THRESHOLD,
-    CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_MAX3D, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
+    CONF_RADAR_IMAGE_TYPE, RADAR_IMAGE_TYPE_CAPPI, DEFAULT_RADAR_IMAGE_TYPE,
     CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY,
     CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE,
 )
@@ -104,6 +104,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
         # Pure radar defaults: no sensor fusion unless user selects a weather entity
         humidity: float | None = None
+        temp_c: float | None = None
         wind_speed_ms: float = 0.0
         wind_bearing_deg: int = 0
         profile_data = None
@@ -117,6 +118,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 # Extrakce povrchové vrstvy (nejnižší geopotenciální výška) pouze pro vizuální log
                 surface = profile_data[-1]
                 humidity = surface["humidity_pct"]
+                temp_c = surface.get("temp_c")
                 wind_speed_ms = surface["wind_speed_ms"]
                 wind_bearing_deg = surface["wind_dir_deg"]
             else:
@@ -133,6 +135,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 if state is not None and state.state not in ("unavailable", "unknown"):
                     try:
                         raw_humidity = state.attributes.get("humidity")
+                        raw_temperature = state.attributes.get("temperature")
                         raw_wind_speed = state.attributes.get("wind_speed")
                         raw_wind_bearing = state.attributes.get("wind_bearing")
 
@@ -143,6 +146,9 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             LOGGER.warning("Zdrojová entita %s neobsahuje atribut 'humidity', fallback na pure_radar",
                                            weather_entity_id)
                             source_used = f"entity:{weather_entity_id} (missing humidity)"
+
+                        if raw_temperature is not None:
+                            temp_c = float(raw_temperature)
 
                         if raw_wind_speed is not None:
                             wind_speed_ms = max(0.0, float(raw_wind_speed) / 3.6)
@@ -159,8 +165,9 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
 
         # Final informational log about chosen fusion source
         LOGGER.debug(
-            "Fetching radar data using mode: %s (humidity=%s, wind=%.1f m/s from %d°) - source=%s",
+            "Fetching radar data using mode: %s (temp=%s, humidity=%s, wind=%.1f m/s from %d°) - source=%s",
             image_type,
+            f"{temp_c:.1f}°C" if temp_c is not None else "None",
             f"{humidity:.1f}%" if humidity is not None else "None (pure_radar)",
             wind_speed_ms,
             wind_bearing_deg,
@@ -203,6 +210,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                         wind_speed_ms,
                         wind_bearing_deg,
                         profile_data,
+                        image_type,
+                        temp_c
                     )
                     LOGGER.debug(
                         "Radar info for GPS [%s, %s]: rain_now=%s, rain_now_pixel_count=%s, nearest_distance=%s",
@@ -276,6 +285,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             wind_speed_ms,
                             wind_bearing_deg,
                             profile_data,
+                            image_type,
+                            temp_c
                         )
 
                         prob = forecast_info["probability_pct"]
