@@ -23,7 +23,7 @@ from .const import (
     CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE,
 )
 from .open_meteo_client import get_3d_wind_profile
-from .radar_processing import get_radar_info, check_forecast_rain, calculate_forecast_probability
+from .radar_processing import get_radar_info, get_forecast_info
 
 
 @dataclass
@@ -37,6 +37,7 @@ class AladinRadar:
     forecast_probabilities: dict[str, int]
     rain_duration_minutes: int
     exceeds_forecast_horizon: bool
+    forecast_timeline: list[dict[str, Any]]
 
 
 @dataclass
@@ -93,7 +94,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         session = aiohttp_client.async_get_clientsession(self.hass)
 
         options = self.config_entry.options
-        use_3d_wind_profile = bool(options.get(CONF_USE_3D_WIND_PROFILE, self._config.get(CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE)))
+        use_3d_wind_profile = bool(options.get(CONF_USE_3D_WIND_PROFILE,
+                                               self._config.get(CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE)))
         radius = int(options.get(CONF_RADAR_RADIUS, self._config.get(CONF_RADAR_RADIUS, DEFAULT_RADAR_RADIUS)))
         threshold_mmh = float(options.get(CONF_RADAR_THRESHOLD_MMH, DEFAULT_RADAR_THRESHOLD_MMH))
         window_size = int(options.get(CONF_RADAR_WINDOW_SIZE, DEFAULT_RADAR_WINDOW_SIZE))
@@ -120,10 +122,11 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             else:
                 LOGGER.warning("Open-Meteo 3D profile unavailable, falling back to 1D radar mode")
                 source_used = "open_meteo_3d_unavailable"
-        
+
         # Fallback se musí provést, pokud uživatel nemá zapnuté 3D, NEBO pokud 3D API selhalo
         if not profile_data:
-            weather_entity_id = options.get(CONF_WEATHER_ENTITY, self._config.get(CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY))
+            weather_entity_id = options.get(CONF_WEATHER_ENTITY,
+                                            self._config.get(CONF_WEATHER_ENTITY, DEFAULT_WEATHER_ENTITY))
 
             if weather_entity_id:
                 state = self.hass.states.get(weather_entity_id)
@@ -137,7 +140,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                             humidity = float(raw_humidity)
                             source_used = f"entity:{weather_entity_id}"
                         else:
-                            LOGGER.warning("Zdrojová entita %s neobsahuje atribut 'humidity', fallback na pure_radar", weather_entity_id)
+                            LOGGER.warning("Zdrojová entita %s neobsahuje atribut 'humidity', fallback na pure_radar",
+                                           weather_entity_id)
                             source_used = f"entity:{weather_entity_id} (missing humidity)"
 
                         if raw_wind_speed is not None:
@@ -150,7 +154,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                         LOGGER.error("Chyba při parsování atributů z entity %s: %s", weather_entity_id, ex)
                         source_used = f"entity:{weather_entity_id} (parse error)"
                 else:
-                    LOGGER.debug("Zdrojová entita %s není dostupná (stav: %s).", weather_entity_id, state.state if state else "Not Found")
+                    LOGGER.debug("Zdrojová entita %s není dostupná (stav: %s).", weather_entity_id,
+                                 state.state if state else "Not Found")
 
         # Final informational log about chosen fusion source
         LOGGER.debug(
@@ -166,7 +171,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         rounded_now = now - timedelta(minutes=now.minute % 5, seconds=now.second, microseconds=now.microsecond)
 
         # 1. Stažení aktuálního snímku (s fallbackem o 5 minut zpět)
-        radar_info: dict[str, Any] = {"rain_now": False, "rain_now_pixel_count": 0, "rain_now_value": 0.0, "nearest_distance": None}
+        radar_info: dict[str, Any] = {"rain_now": False, "rain_now_pixel_count": 0, "rain_now_value": 0.0,
+                                      "nearest_distance": None}
 
         for offset in (0, 5):
             target_time = rounded_now - timedelta(minutes=offset)
@@ -200,7 +206,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     )
                     LOGGER.debug(
                         "Radar info for GPS [%s, %s]: rain_now=%s, rain_now_pixel_count=%s, nearest_distance=%s",
-                        lat, lon, radar_info["rain_now"], radar_info["rain_now_pixel_count"], radar_info["nearest_distance"]
+                        lat, lon, radar_info["rain_now"], radar_info["rain_now_pixel_count"],
+                        radar_info["nearest_distance"]
                     )
                     break
 
@@ -215,6 +222,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         forecast_probabilities: dict[str, int] = {}
         forecast_rain_states: dict[int, bool] = {}
         forecast_target_utc_map: dict[int, datetime] = {}
+        forecast_timeline: list[dict[str, Any]] = []
 
         # Nowcasting model se počítá déle než samotný snímek, zkusíme aktuální, případně až 10 minut starý base
         for offset in (0, 5, 10):
@@ -226,6 +234,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
             temp_probabilities = {}
             temp_rain_states = {}
             temp_target_utc_map = {}
+            temp_timeline = []
 
             for minutes in range(10, 70, 10):
                 forecast_target = base_time_dt + timedelta(minutes=minutes)
@@ -253,36 +262,35 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                     if response.status == HTTPStatus.OK:
                         image_bytes = await response.read()
 
-                        # Calculate probability and save under exact ISO time
-                        prob = await self.hass.async_add_executor_job(
-                            calculate_forecast_probability,
+                        # Fetch comprehensive forecast info in a single pass
+                        forecast_info = await self.hass.async_add_executor_job(
+                            get_forecast_info,
                             image_bytes,
                             lat,
                             lon,
                             window_size,
                             threshold_mmh,
-                            humidity,
-                            wind_speed_ms,
-                            wind_bearing_deg,
-                            profile_data,
-                        )
-                        temp_probabilities[forecast_target_utc.isoformat()] = prob
-
-                        has_rain = await self.hass.async_add_executor_job(
-                            check_forecast_rain,
-                            image_bytes,
-                            lat,
-                            lon,
-                            threshold_mmh,
-                            window_size,
                             size_threshold,
                             humidity,
                             wind_speed_ms,
                             wind_bearing_deg,
                             profile_data,
                         )
+
+                        prob = forecast_info["probability_pct"]
+                        has_rain = forecast_info["rain"]
+
+                        temp_probabilities[forecast_target_utc.isoformat()] = prob
                         temp_rain_states[real_minutes_until] = has_rain
                         temp_target_utc_map[real_minutes_until] = forecast_target_utc
+
+                        temp_timeline.append({
+                            "time": forecast_target_utc.isoformat(),
+                            "rain": has_rain,
+                            "probability_pct": prob,
+                            "intensity_mmh": forecast_info["intensity_mmh"],
+                            "cloud_size_px": forecast_info["cloud_size_px"]
+                        })
 
                     elif response.status == HTTPStatus.NOT_FOUND:
                         # If the first image is missing, there is no point in trying the rest of the batch
@@ -299,6 +307,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 forecast_probabilities = temp_probabilities
                 forecast_rain_states = temp_rain_states
                 forecast_target_utc_map = temp_target_utc_map
+                forecast_timeline = temp_timeline
                 break
 
         # Calculate duration and expected timestamps based on collected states
@@ -355,5 +364,6 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 forecast_probabilities=forecast_probabilities,
                 rain_duration_minutes=rain_duration_minutes,
                 exceeds_forecast_horizon=exceeds_forecast_horizon,
+                forecast_timeline=forecast_timeline,
             )
         )

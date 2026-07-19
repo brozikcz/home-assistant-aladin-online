@@ -274,7 +274,10 @@ class RadarSensorEntity(CoordinatorEntity, ComponentSensorEntity):
 		self._attr_native_value = self.entity_description.value_func(self.coordinator.data.radar)
 
 		if self.entity_description.key == SensorType.RADAR_RAIN_PROBABILITY:
-			self._attr_extra_state_attributes = self.coordinator.data.radar.forecast_probabilities
+			self._attr_extra_state_attributes = {
+				"forecast_probabilities": self.coordinator.data.radar.forecast_probabilities,
+				"timeline": self.coordinator.data.radar.forecast_timeline
+			}
 		elif self.entity_description.key == SensorType.RADAR_RAIN_DURATION:
 			self._attr_extra_state_attributes = {
 				"exceeds_forecast_horizon": self.coordinator.data.radar.exceeds_forecast_horizon

@@ -474,10 +474,11 @@ dict[str, Any]:
         }
 
 
-def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mmh: float = 0.5, window_size: int = 3,
-                        size_threshold: int = 2, humidity: float | None = None, wind_speed_ms: float = 0.0,
-                        wind_bearing_deg: int = 0, profile_data: list[dict] | None = None) -> bool:
-    """Check neighborhood in the forecast image for the presence of significant rain."""
+def get_forecast_info(image_bytes: bytes, lat: float, lon: float, window_size: int = 3,
+                      threshold_mmh: float = 0.5, size_threshold: int = 2, humidity: float | None = None,
+                      wind_speed_ms: float = 0.0, wind_bearing_deg: int = 0,
+                      profile_data: list[dict] | None = None) -> dict[str, Any]:
+    """Calculate comprehensive forecast info (probability, rain state, intensity, cloud size)."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
         width, height = img.size
@@ -488,36 +489,22 @@ def check_forecast_rain(image_bytes: bytes, lat: float, lon: float, threshold_mm
         )
 
         if not pixel_coords:
-            return False
+            return {
+                "rain": False,
+                "probability_pct": 0,
+                "intensity_mmh": 0.0,
+                "cloud_size_px": 0
+            }
 
         px, py = pixel_coords
-
         effective_humidity = final_humidity if profile_data else humidity
-        count, _ = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh, effective_humidity)
-        return count >= size_threshold
 
+        rain_pixels, max_intensity = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh,
+                                                          effective_humidity)
 
-def calculate_forecast_probability(image_bytes: bytes, lat: float, lon: float, window_size: int = 3,
-                                   threshold_mmh: float = 0.5, humidity: float | None = None,
-                                   wind_speed_ms: float = 0.0, wind_bearing_deg: int = 0,
-                                   profile_data: list[dict] | None = None) -> int:
-    """Calculate spatial rain probability (%) within a bounded window around the target coordinates."""
-    with Image.open(io.BytesIO(image_bytes)) as img:
-        img = img.convert("RGBA")
-        width, height = img.size
-        pixels = img.load()
-
-        pixel_coords, _, _, final_humidity = get_dynamic_drift_pixel(
-            lat, lon, width, height, pixels, wind_speed_ms, wind_bearing_deg, profile_data
-        )
-
-        if not pixel_coords:
-            return 0
-
-        px, py = pixel_coords
-
-        effective_humidity = final_humidity if profile_data else humidity
-        rain_pixels, _ = evaluate_pixel_cloud(px, py, width, height, pixels, window_size, threshold_mmh,
-                                              effective_humidity)
-
-        return int((rain_pixels / (window_size * window_size)) * 100)
+        return {
+            "rain": rain_pixels >= size_threshold,
+            "probability_pct": int((rain_pixels / (window_size * window_size)) * 100),
+            "intensity_mmh": max_intensity if rain_pixels >= size_threshold else 0.0,
+            "cloud_size_px": rain_pixels
+        }
