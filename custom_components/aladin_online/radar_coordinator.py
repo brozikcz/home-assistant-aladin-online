@@ -23,7 +23,7 @@ from .const import (
     CONF_USE_3D_WIND_PROFILE, DEFAULT_USE_3D_WIND_PROFILE,
 )
 from .open_meteo_client import get_3d_wind_profile
-from .radar_processing import get_radar_info, get_forecast_info
+from .radar_processing import get_radar_info, get_forecast_info, get_precipitation_details
 
 
 @dataclass
@@ -38,6 +38,8 @@ class AladinRadar:
     rain_duration_minutes: int
     exceeds_forecast_horizon: bool
     forecast_timeline: list[dict[str, Any]]
+    precipitation_type: str | None = None
+    freezing_level_m: float | None = None
 
 
 @dataclass
@@ -364,6 +366,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
         all_probabilities = list(forecast_probabilities.values()) + [current_rain_prob]
         rain_probability = max(all_probabilities) if all_probabilities else 0
 
+        precip_type, freezing_level = get_precipitation_details(profile_data)
+
         return AladinData(
             weather=self.aladin_coordinator.data,
             radar=AladinRadar(
@@ -377,5 +381,7 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 rain_duration_minutes=rain_duration_minutes,
                 exceeds_forecast_horizon=exceeds_forecast_horizon,
                 forecast_timeline=forecast_timeline,
+                precipitation_type=precip_type,
+                freezing_level_m=freezing_level,
             )
         )

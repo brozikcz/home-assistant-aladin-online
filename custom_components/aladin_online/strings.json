@@ -68,6 +68,18 @@
 			},
 			"wind_gust_speed": {
 				"name": "Wind gust speed"
+			},
+			"precipitation_type": {
+				"name": "Precipitation type",
+				"state": {
+					"rain": "Rain",
+					"snow": "Snow",
+					"mixed": "Mixed",
+					"freezing_rain": "Freezing rain"
+				}
+			},
+			"freezing_level_m": {
+				"name": "Freezing level"
 			}
 		}
 	}

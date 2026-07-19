@@ -524,3 +524,44 @@ dict[str, Any]:
             "intensity_mmh": max_intensity if rain_pixels >= size_threshold else 0.0,
             "cloud_size_px": rain_pixels
         }
+
+
+def get_precipitation_details(profile_data: list[dict] | None) -> tuple[str | None, float | None]:
+    """Determine precipitation type and freezing level (0°C isotherm height) from temperature profile."""
+    if not profile_data:
+        return None, None
+
+    freezing_level = None
+    for i in range(len(profile_data) - 1):
+        top = profile_data[i]
+        bot = profile_data[i + 1]
+        # Hledáme nejvyšší přechod přes 0°C (od studenějšího nahoře po teplejší dole)
+        if top["temp_c"] <= 0.0 < bot["temp_c"]:
+            # Lineární interpolace výšky 0°C
+            frac = (0.0 - top["temp_c"]) / (bot["temp_c"] - top["temp_c"])
+            freezing_level = top["height_m"] - frac * (top["height_m"] - bot["height_m"])
+            break
+
+    surface_temp = profile_data[-1]["temp_c"]
+
+    if freezing_level is None:
+        # Celý profil nad nebo pod nulou
+        if surface_temp <= 0.0:
+            return "snow", None
+        return "rain", None
+
+    # Teplá vrstva pod nulovou izotermou
+    warm_layer_depth = freezing_level - profile_data[-1]["height_m"]
+
+    # Detekce mrznoucího deště při inverzi (teplý vzduch nahoře, teplota u země <= 0°C)
+    if surface_temp <= 0.0:
+        if warm_layer_depth > 400:
+            return "freezing_rain", round(freezing_level, 1)
+        return "snow", round(freezing_level, 1)
+
+    if warm_layer_depth > 1200:
+        return "rain", round(freezing_level, 1)
+    elif warm_layer_depth > 400:
+        return "mixed", round(freezing_level, 1)
+    else:
+        return "snow", round(freezing_level, 1)

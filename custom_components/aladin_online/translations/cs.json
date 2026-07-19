@@ -67,6 +67,18 @@
 			},
 			"wind_gust_speed": {
 				"name": "Nárazová rychlost větru"
+			},
+			"precipitation_type": {
+				"name": "Typ srážek",
+				"state": {
+					"rain": "Déšť",
+					"snow": "Sníh",
+					"mixed": "Smíšené",
+					"freezing_rain": "Mrznoucí déšť"
+				}
+			},
+			"freezing_level_m": {
+				"name": "Nulová izoterma"
 			}
 		}
 	}

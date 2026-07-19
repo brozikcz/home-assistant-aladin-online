@@ -51,6 +51,8 @@ class SensorType(StrEnum):
 	RADAR_RAIN_PROBABILITY = "radar_rain_probability"
 	RADAR_RAIN_NOW_PIXEL_COUNT = "radar_rain_now_pixel_count"
 	RADAR_RAIN_DURATION = "radar_rain_duration"
+	RADAR_PRECIPITATION_TYPE = "precipitation_type"
+	RADAR_FREEZING_LEVEL = "freezing_level_m"
 
 @dataclass(frozen=True, kw_only=True)
 class SensorEntityDescription(ComponentSensorEntityDescription):
@@ -107,6 +109,24 @@ RADAR_SENSORS: Dict[SensorType, SensorEntityDescription] = {
 		native_unit_of_measurement=UnitOfTime.MINUTES,
 		state_class=SensorStateClass.MEASUREMENT,
 		value_func=lambda data: data.rain_duration_minutes,
+	),
+	SensorType.RADAR_PRECIPITATION_TYPE: SensorEntityDescription(
+		key=SensorType.RADAR_PRECIPITATION_TYPE,
+		name="Radar precipitation type",
+		icon="mdi:weather-snowy-rainy",
+		device_class=SensorDeviceClass.ENUM,
+		options=["rain", "snow", "mixed", "freezing_rain"],
+		value_func=lambda data: data.precipitation_type,
+	),
+	SensorType.RADAR_FREEZING_LEVEL: SensorEntityDescription(
+		key=SensorType.RADAR_FREEZING_LEVEL,
+		name="Radar freezing level",
+		icon="mdi:snowflake-thermometer",
+		device_class=SensorDeviceClass.DISTANCE,
+		native_unit_of_measurement=UnitOfLength.METERS,
+		suggested_display_precision=0,
+		state_class=SensorStateClass.MEASUREMENT,
+		value_func=lambda data: data.freezing_level_m,
 	),
 }
 
