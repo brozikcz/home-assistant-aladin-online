@@ -25,6 +25,9 @@ COLOR_TO_DBZ = {
     (252, 252, 252): 60
 }
 
+# O(1) rychlé vyhledávání barev pro optimalizaci výkonu CPU
+COLOR_TO_DBZ_TUPLE = {color: dbz for color, dbz in COLOR_TO_DBZ.items()}
+
 DBZ_TO_MMH: Final = {
     4: 0.1, 8: 0.325, 12: 0.55, 16: 0.775,
     20: 1.0, 24: 3.25, 28: 5.5, 32: 7.75,
@@ -94,8 +97,9 @@ def calculate_wind_drift_offset_1d(wind_speed_ms: float, wind_bearing_deg: int, 
 
     wind_bearing_rad = math.radians(wind_bearing_deg)
 
-    lat_offset_m = drift_distance_m * math.cos(wind_bearing_rad)
-    lon_offset_m = drift_distance_m * math.sin(wind_bearing_rad)
+    # Přidáno záporné znaménko pro korektní obrácení vektoru (Reverse Tracking proti směru větru)
+    lat_offset_m = -drift_distance_m * math.cos(wind_bearing_rad)
+    lon_offset_m = -drift_distance_m * math.sin(wind_bearing_rad)
 
     # Approximate conversion meters -> degrees at the specific latitude for lon
     lat_offset_deg = lat_offset_m / 111111.0
@@ -135,7 +139,7 @@ def gps_to_pixel(lat: float, lon: float, width: int, height: int) -> tuple[int, 
 def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat: float) -> tuple[float, float, float]:
     """
     Simulates a drop falling through multiple atmospheric layers.
-    Returns: lat_offset_deg, lon_offset_deg, weighted_avg_humidity
+    Returns: lat_offset_deg, lon_offset_deg, lowest_layer_humidity
     """
     if not profile_data:
         return 0.0, 0.0, 100.0
@@ -144,8 +148,9 @@ def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat:
 
     total_lat_offset_m = 0.0
     total_lon_offset_m = 0.0
-    weighted_humidity = 0.0
-    total_dz = 0.0
+
+    # Použijeme vlhkost z nejnižší dostupné vrstvy pro efektivnější detekci virgy
+    final_humidity = profile_data[-1]["humidity_pct"]
 
     for i in range(len(profile_data) - 1):
         top_layer = profile_data[i]
@@ -174,12 +179,6 @@ def calculate_3d_wind_drift(profile_data: list[dict], intensity_mmh: float, lat:
         total_lon_offset_m += avg_u * dt
         total_lat_offset_m += avg_v * dt
 
-        avg_hum = (top_layer["humidity_pct"] + bottom_layer["humidity_pct"]) / 2.0
-        weighted_humidity += avg_hum * dz
-        total_dz += dz
-
-    final_humidity = weighted_humidity / total_dz if total_dz > 0 else 100.0
-
     lat_offset_deg = total_lat_offset_m / 111111.0
     lon_offset_deg = total_lon_offset_m / (111111.0 * math.cos(math.radians(lat)))
 
@@ -191,6 +190,12 @@ def get_dbz(r: int, g: int, b: int, a: int = 255) -> int:
     if a == 0:
         return 0
 
+    # Rychlá shoda O(1) pro většinu pixelů, drasticky ulehčí CPU
+    exact_match = COLOR_TO_DBZ_TUPLE.get((r, g, b))
+    if exact_match is not None:
+        return exact_match
+
+    # Fallback na lineární vyhledávání (pouze pro okraje a kompresní artefakty)
     dbz = 0
     min_distance = float("inf")
     for (cr, cg, cb), value in COLOR_TO_DBZ.items():
@@ -245,6 +250,7 @@ def get_dynamic_drift_pixel(lat: float, lon: float, width: int, height: int, pix
     lat_off_2, lon_off_2 = calculate_wind_drift_offset_1d(wind_speed_ms, wind_bearing_deg, real_fall_time, lat)
 
     return gps_to_pixel(lat - lat_off_2, lon - lon_off_2, width, height), lat_off_2, lon_off_2, 100.0
+
 
 def evaluate_pixel_cloud(px: int, py: int, width: int, height: int, pixels: Any, window_size: int, threshold_mmh: float,
                          humidity: float | None = None) -> tuple[int, float]:
@@ -360,7 +366,7 @@ def save_debug_image(img: Image.Image, original_lat: float, original_lon: float,
 def get_radar_info(image_bytes: bytes, lat: float, lon: float, radius: int = 60, threshold_mmh: float = 0.5,
                    window_size: int = 3, size_threshold: int = 2, humidity: float | None = None,
                    wind_speed_ms: float = 0.0, wind_bearing_deg: int = 0, profile_data: list[dict] | None = None) -> \
-dict[str, Any]:
+        dict[str, Any]:
     """Process the current radar image to find immediate rain data and scan for the nearest precipitation."""
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGBA")
