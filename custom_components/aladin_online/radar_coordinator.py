@@ -240,7 +240,8 @@ class AladinRadarCoordinator(DataUpdateCoordinator[AladinData]):
                 forecast_target = base_time_dt + timedelta(minutes=minutes)
 
                 real_minutes_until = int((forecast_target - now).total_seconds() / 60)
-                if real_minutes_until < 0:
+                # Ignorujeme snímky, které zasahují do aktuálního stavu nebo minulosti
+                if real_minutes_until < 5:
                     continue
 
                 tgt_date = forecast_target.strftime("%Y%m%d")
